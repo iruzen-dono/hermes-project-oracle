@@ -7,3 +7,4 @@ build/
 *.report.json
 .DS_Store
 Thumbs.db
+.ruff_cache/
