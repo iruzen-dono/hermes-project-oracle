@@ -14,7 +14,7 @@ from oracle_scan_lib.io import safe_read as _safe_read
 
 
 def get_git_context(path: Path) -> dict[str, Any]:
-    """Récupère le contexte Git du projet."""
+    """Collect the project's git context."""
     ctx: dict[str, Any] = {"has_git": False}
     if not (path / ".git").exists():
         return ctx

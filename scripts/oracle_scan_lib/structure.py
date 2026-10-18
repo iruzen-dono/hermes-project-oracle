@@ -53,7 +53,7 @@ def _collect_nested_packages(path: Path, max_depth: int = 2, max_packages: int =
 
 
 def get_structure(path: Path, max_depth: int = 3, skip_dirs: set[str] | None = None) -> list[dict[str, Any]]:
-    """Produit une arborescence simplifiée."""
+    """Produce a simplified tree view of the repository."""
     if skip_dirs is None:
         skip_dirs = _SKIP_DIRS
 

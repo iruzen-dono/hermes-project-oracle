@@ -13,7 +13,7 @@ from oracle_scan_lib.constants import SKIP_DIRS as _SKIP_DIRS
 
 
 def _detect_misc(path: Path) -> dict[str, Any]:
-    """Diverses métadonnées sur le projet."""
+    """Miscellaneous metadata about the project."""
     misc: dict[str, Any] = {}
 
     # Root files

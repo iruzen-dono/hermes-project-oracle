@@ -120,7 +120,7 @@ def _sanitize_untrusted(text: Any) -> str:
 
 
 def _cite(text: Any) -> str:
-    """Aplatit et présente le texte non fiable comme une citation (blockquote)."""
+    """Flatten untrusted text and present it as a quoted blockquote."""
     return f"> {_sanitize_untrusted(text)}"
 
 

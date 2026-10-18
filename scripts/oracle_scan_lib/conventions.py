@@ -20,7 +20,7 @@ from oracle_scan_lib.io import safe_read as _safe_read
 
 
 def detect_conventions(path: Path) -> dict[str, Any]:
-    """Détecte les outils de qualité, CI, tests, et conventions."""
+    """Detect quality tools, CI, test frameworks and conventions."""
     conv: dict[str, Any] = {}
 
     # ── Test frameworks ──

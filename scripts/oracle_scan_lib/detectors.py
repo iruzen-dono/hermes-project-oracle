@@ -62,7 +62,7 @@ def _dedupe(items: list[str]) -> list[str]:
 
 
 def _detect_python(pyproject: Path | None, root: Path | None = None) -> dict[str, Any]:
-    """Analyse un projet Python via pyproject.toml."""
+    """Analyse a Python project via pyproject.toml."""
     result: dict[str, Any] = {"present": True}
     content = _read_maybe_rooted(pyproject, root)
     if not content:
@@ -127,7 +127,7 @@ def _detect_python(pyproject: Path | None, root: Path | None = None) -> dict[str
 
 
 def _detect_node(package_json: Path | None, root: Path | None = None) -> dict[str, Any]:
-    """Analyse un projet Node.js via package.json (frameworks multiples, scripts complets)."""
+    """Analyse a Node.js project via package.json (multiple frameworks, full scripts)."""
     result: dict[str, Any] = {"present": True}
     if package_json is None:
         return result
@@ -194,7 +194,7 @@ def _detect_node(package_json: Path | None, root: Path | None = None) -> dict[st
 
 
 def _detect_java_maven(pom: Path | None, root: Path | None = None) -> dict[str, Any]:
-    """Analyse un projet Maven."""
+    """Analyse a Maven project."""
     result: dict[str, Any] = {"present": True}
     content = _read_maybe_rooted(pom, root)
     if not content:
@@ -219,7 +219,7 @@ def _detect_java_maven(pom: Path | None, root: Path | None = None) -> dict[str, 
 
 
 def _detect_gradle(build_file: Path | None, root: Path | None = None) -> dict[str, Any]:
-    """Analyse un projet Gradle."""
+    """Analyse a Gradle project."""
     result: dict[str, Any] = {"present": True}
     content = _read_maybe_rooted(build_file, root)
     if not content:
@@ -238,7 +238,7 @@ def _detect_gradle(build_file: Path | None, root: Path | None = None) -> dict[st
 
 
 def _detect_cargo(cargo_toml: Path | None, root: Path | None = None) -> dict[str, Any]:
-    """Analyse un projet Rust via Cargo.toml."""
+    """Analyse a Rust project via Cargo.toml."""
     result: dict[str, Any] = {"present": True}
     content = _read_maybe_rooted(cargo_toml, root)
     if not content:
@@ -271,7 +271,7 @@ def _detect_cargo(cargo_toml: Path | None, root: Path | None = None) -> dict[str
 
 
 def _detect_go(go_mod: Path | None, root: Path | None = None) -> dict[str, Any]:
-    """Analyse un projet Go via go.mod."""
+    """Analyse a Go project via go.mod."""
     result: dict[str, Any] = {"present": True}
     content = _read_maybe_rooted(go_mod, root)
     if not content:
@@ -289,7 +289,7 @@ def _detect_go(go_mod: Path | None, root: Path | None = None) -> dict[str, Any]:
 
 
 def _detect_php(composer: Path | None, root: Path | None = None) -> dict[str, Any]:
-    """Analyse un projet PHP via composer.json."""
+    """Analyse a PHP project via composer.json."""
     result: dict[str, Any] = {"present": True}
     content = _read_maybe_rooted(composer, root)
     if not content:
@@ -316,7 +316,7 @@ def _detect_php(composer: Path | None, root: Path | None = None) -> dict[str, An
 
 
 def detect_build_system(path: Path) -> list[dict[str, Any]]:
-    """Détecte les systèmes de build et fichiers de config."""
+    """Detect build systems and config files."""
     config_scanners = [
         ("pyproject.toml", "Python/pyproject", _detect_python),
         ("setup.py", "Python/setup.py", None),
@@ -390,7 +390,7 @@ def detect_frameworks(scan: dict[str, Any]) -> list[str]:
 
 
 def detect_entry_points(path: Path) -> list[dict[str, str]]:
-    """Trouve les points d'entrée du projet (fichiers de démarrage)."""
+    """Find the project's entry points (startup files)."""
     patterns = {
         "main.py": "application_entry",
         "app.py": "application_entry",
@@ -491,7 +491,7 @@ def detect_entry_points(path: Path) -> list[dict[str, str]]:
 
 
 def detect_languages(path: Path) -> list[dict[str, Any]]:
-    """Compte les fichiers par extension et retourne les langages détectés."""
+    """Count files per extension and return the detected languages."""
     counts: defaultdict[str, int] = defaultdict(int)
     for f in path.rglob("*"):
         if not f.is_file():
