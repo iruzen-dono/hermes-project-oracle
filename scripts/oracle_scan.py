@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """
-Hermes Project Oracle — Scan de projet.
+Project Oracle — deep project scanner.
 
-Analyse en profondeur un projet logiciel et produit un rapport JSON structuré
-contenant langages, framework, dépendances, conventions, points d'entrée,
-et arborescence.
+Analyses a codebase in depth and produces a structured JSON report covering
+languages, frameworks, build systems, entry points, conventions, environment
+variable names, git context, and project tree. Zero dependencies.
 
 Usage:
-    python oracle_scan.py --path /chemin/du/projet --output .oracle/
-    python oracle_scan.py --path . --depth 2 --skip-gitignore
+    python oracle_scan.py --path /path/to/project --output .oracle/
+    python oracle_scan.py --path . --output .oracle/scan-report.json --depth 2
+    python oracle_scan.py --path . --output /dev/stdout
 
-Cross-platform: Windows, Linux, macOS.
+--output accepts a directory (`.oracle/` or `.oracle`) or an explicit
+JSON file path (`report.json`). Cross-platform: Windows, Linux, macOS.
 """
 
 from __future__ import annotations
@@ -18,7 +20,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import re
 import subprocess
 import sys
@@ -74,7 +75,7 @@ _SKIP_EXTENSIONS = {
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
     ".o", ".obj", ".lib", ".a",
     ".min.js", ".min.css",
-    ".map", ".br", ".gz",
+    ".map", ".br",
 }
 
 _LANGUAGE_MAP: dict[str, tuple[str, str]] = {
@@ -198,8 +199,24 @@ def _detect_python(pyproject: Path | None) -> dict[str, Any]:
     return result
 
 
+_NODE_FRAMEWORKS: list[tuple[str, str]] = [
+    # (package name, display name) — meta-frameworks first, then servers, then UI libs.
+    ("next", "Next.js"), ("nuxt", "Nuxt"), ("remix", "Remix"), ("gatsby", "Gatsby"),
+    ("astro", "Astro"), ("@angular/core", "Angular"), ("angular", "Angular"),
+    ("@nestjs/core", "NestJS"), ("nest", "NestJS"),
+    ("express", "Express"), ("fastify", "Fastify"), ("koa", "Koa"), ("hapi", "Hapi"),
+    ("socket.io", "Socket.IO"),
+    ("react", "React"), ("react-native", "React Native"), ("expo", "Expo"),
+    ("vue", "Vue"), ("svelte", "Svelte"), ("solid-js", "SolidJS"),
+    ("vite", "Vite"), ("webpack", "Webpack"), ("tailwindcss", "Tailwind CSS"),
+]
+
+_NODE_TEST_PACKAGES = ("jest", "vitest", "mocha", "playwright", "@playwright/test",
+                       "cypress", "ava", "tap")
+
+
 def _detect_node(package_json: Path | None) -> dict[str, Any]:
-    """Analyse un projet Node.js via package.json."""
+    """Analyse un projet Node.js via package.json (frameworks multiples, scripts complets)."""
     result: dict[str, Any] = {"present": True}
     content = _safe_read(package_json) if package_json else None
     if not content:
@@ -211,38 +228,52 @@ def _detect_node(package_json: Path | None) -> dict[str, Any]:
         return result
 
     scripts = data.get("scripts", {})
-    result["scripts"] = list(scripts.keys())[:15]
+    if isinstance(scripts, dict):
+        # Keep the command, not just the name: agents need `npm run build`, not `build`.
+        result["scripts"] = {
+            k: (str(v)[:200] + "…" if len(str(v)) > 200 else str(v))
+            for k, v in list(scripts.items())[:15]
+        }
     all_deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
+    if not isinstance(all_deps, dict):
+        all_deps = {}
     result["deps_sample"] = list(all_deps.keys())[:50]
-    result["has_test_script"] = "test" in scripts
 
-    # Framework detection
-    fw_map = {
-        "next": "Next.js", "react": "React", "vue": "Vue",
-        "svelte": "Svelte", "astro": "Astro", "nuxt": "Nuxt",
-        "express": "Express", "fastify": "Fastify", "nest": "NestJS",
-        "remix": "Remix", "gatsby": "Gatsby", "solid": "SolidJS",
-        "angular": "Angular",
-    }
-    for dep, fw in fw_map.items():
-        if dep in all_deps:
-            result["framework"] = fw
-            break
+    # Framework detection — collect ALL matches, not just the first.
+    frameworks = [display for pkg, display in _NODE_FRAMEWORKS if pkg in all_deps]
+    seen_fw: set[str] = set()
+    result["frameworks"] = [fw for fw in frameworks if not (fw in seen_fw or seen_fw.add(fw))]
+    if result["frameworks"]:
+        result["framework"] = result["frameworks"][0]
+
+    # Test evidence from deps + test script command.
+    test_tools = [pkg for pkg in _NODE_TEST_PACKAGES if pkg in all_deps]
+    if test_tools:
+        result["test_tools"] = test_tools
+    if isinstance(scripts, dict) and "test" in scripts:
+        result["has_test_script"] = True
+        result["test_command"] = str(scripts["test"])[:200]
 
     # Package manager detection
     for pm_file, pm_name in [
         ("pnpm-lock.yaml", "pnpm"),
         ("yarn.lock", "yarn"),
-        ("package-lock.json", "npm"),
         ("bun.lockb", "bun"),
+        ("bun.lock", "bun"),
+        ("package-lock.json", "npm"),
     ]:
         if (package_json.parent / pm_file).exists():
             result["pm"] = pm_name
             break
+    if "pm" not in result and isinstance(data.get("packageManager"), str):
+        result["pm"] = data["packageManager"].split("@")[0]
 
-    # TypeScript
+    # TypeScript + Node engine constraint
     if "typescript" in all_deps or (package_json.parent / "tsconfig.json").exists():
         result["typescript"] = True
+    engines = data.get("engines", {})
+    if isinstance(engines, dict) and engines.get("node"):
+        result["node_engine"] = str(engines["node"])[:50]
 
     return result
 
@@ -407,29 +438,37 @@ def detect_build_system(path: Path) -> list[dict[str, str]]:
     return results
 
 
-def detect_framework(scan: dict[str, Any]) -> str | None:
-    """Déduit le framework principal de toutes les configs parsées."""
-    # Check explicit framework in parsed configs
-    for key in ("parsed",):
-        for bs in scan.get("build_systems", []):
-            parsed = bs.get("parsed", {})
-            if isinstance(parsed, dict) and parsed.get("framework"):
-                return parsed["framework"]
+def detect_frameworks(scan: dict[str, Any]) -> list[str]:
+    """Collect every framework found across parsed configs (a project usually has several)."""
+    fws: list[str] = []
+    for bs in scan.get("build_systems", []):
+        parsed = bs.get("parsed", {})
+        if not isinstance(parsed, dict):
+            continue
+        for key in ("frameworks", "framework"):
+            val = parsed.get(key)
+            if isinstance(val, str):
+                fws.append(val)
+            elif isinstance(val, list):
+                fws.extend(v for v in val if isinstance(v, str))
 
-    # Special files heuristic
-    special: list[tuple[str, str]] = [
-        ("manage.py", "Django"),
-        ("app.py", "Flask"),
-        ("main.py", ""),
-        ("artisan", "Laravel"),
-        ("bin/console", "Symfony"),
-    ]
-    root = Path(scan.get("project_path", "."))
-    for fname, fw in special:
-        if (root / fname).is_file():
-            return fw if fw else None
+    # Special files heuristic (only if nothing was detected yet)
+    if not fws:
+        special: list[tuple[str, str]] = [
+            ("manage.py", "Django"),
+            ("app.py", "Flask"),
+            ("artisan", "Laravel"),
+            ("bin/console", "Symfony"),
+        ]
+        root = Path(scan.get("project_path", "."))
+        for fname, fw in special:
+            if (root / fname).is_file():
+                fws.append(fw)
+                break
 
-    return None
+    # Dedupe, keep order
+    seen: set[str] = set()
+    return [fw for fw in fws if not (fw in seen or seen.add(fw))]
 
 
 def detect_entry_points(path: Path) -> list[dict[str, str]]:
@@ -532,6 +571,27 @@ def detect_conventions(path: Path) -> dict[str, Any]:
                 if content and "junit" in content.lower():
                     detected_tests.append(framework)
 
+    # ── Test frameworks from package.json dependencies ──
+    # Reading actual dependencies is more reliable than hunting config files.
+    pkg = path / "package.json"
+    if pkg.is_file():
+        content = _safe_read(pkg)
+        if content:
+            try:
+                data = json.loads(content)
+                deps = {**data.get("dependencies", {}),
+                        **data.get("devDependencies", {})}
+                pkg_test_map = {
+                    "jest": "Jest", "vitest": "Vitest", "mocha": "Mocha",
+                    "playwright": "Playwright", "@playwright/test": "Playwright",
+                    "cypress": "Cypress", "ava": "Ava", "tap": "tap",
+                }
+                for dep, tname in pkg_test_map.items():
+                    if dep in deps and tname not in detected_tests:
+                        detected_tests.append(tname)
+            except json.JSONDecodeError:
+                pass
+
     conv["test_frameworks"] = list(set(detected_tests))
 
     # ── Linting / Formatting ──
@@ -595,6 +655,9 @@ def detect_conventions(path: Path) -> dict[str, Any]:
     # ── Monorepo detection ──
     conv["is_monorepo"] = _is_monorepo(path)
 
+    # ── Test files on disk (evidence, not just config markers) ──
+    conv["test_file_count"] = _count_test_files(path)
+
     return conv
 
 
@@ -623,6 +686,102 @@ def _is_monorepo(path: Path) -> bool:
                 markers += 1
                 break
     return markers >= 2
+
+
+_ENV_EXAMPLE_NAMES = (".env.example", ".env.sample", ".env.template", ".env.dist")
+
+
+def _parse_env_names(content: str) -> list[str]:
+    """Extract valid variable names from env-file content (values ignored)."""
+    names: list[str] = []
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            var = line.split("=", 1)[0].strip()
+            if var and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", var):
+                names.append(var)
+    return sorted(set(names))
+
+
+def detect_env_files(path: Path) -> dict[str, list[str]]:
+    """Extract variable NAMES from example env files (never values, never real .env).
+
+    Checks the project root and one level of subdirectories (monorepo support,
+    e.g. backend/.env.example). Keys are relative paths.
+    """
+    found: dict[str, list[str]] = {}
+    candidates: list[Path] = [path / n for n in _ENV_EXAMPLE_NAMES]
+    try:
+        for child in path.iterdir():
+            if child.is_dir() and child.name not in _SKIP_DIRS and not child.name.startswith("."):
+                candidates.extend(child / n for n in _ENV_EXAMPLE_NAMES)
+    except PermissionError:
+        pass
+
+    for f in candidates:
+        if not f.is_file():
+            continue
+        content = _safe_read(f, max_bytes=20_000)
+        if content is None:
+            continue
+        names = _parse_env_names(content)
+        if names:
+            try:
+                key = f.relative_to(path).as_posix()
+            except ValueError:
+                key = f.name
+            found[key] = names
+    return found
+
+
+def _count_test_files(path: Path) -> int:
+    """Count test files by naming convention (test_*.py, *.test.ts, *_test.go...)."""
+    patterns = ("test_*.py", "*_test.py", "*_test.go", "*_test.rs",
+                "*.test.ts", "*.test.tsx", "*.test.js", "*.test.jsx",
+                "*.spec.ts", "*.spec.js", "*.spec.tsx",
+                "*Test.java", "*Tests.java", "*Test.kt", "*Tests.kt")
+    count = 0
+    for pat in patterns:
+        for f in path.rglob(pat):
+            if any(s in f.parts for s in _SKIP_DIRS):
+                continue
+            count += 1
+    return count
+
+
+def _collect_nested_packages(path: Path, max_depth: int = 2, max_packages: int = 20) -> list[dict[str, Any]]:
+    """Find package.json / pyproject.toml / pom.xml in subdirectories (monorepo support)."""
+    found: list[dict[str, Any]] = []
+    targets = {"package.json": _detect_node, "pyproject.toml": _detect_python,
+               "pom.xml": _detect_java_maven, "Cargo.toml": _detect_cargo,
+               "go.mod": _detect_go, "composer.json": _detect_php}
+
+    def walk(p: Path, depth: int) -> None:
+        if depth > max_depth or len(found) >= max_packages:
+            return
+        try:
+            children = sorted(p.iterdir())
+        except PermissionError:
+            return
+        for child in children:
+            if not child.is_dir() or child.name in _SKIP_DIRS or child.name.startswith("."):
+                continue
+            for tname, scanner in targets.items():
+                tf = child / tname
+                if tf.is_file():
+                    parsed = scanner(tf)
+                    try:
+                        rel = str(tf.relative_to(path).as_posix())
+                    except ValueError:
+                        rel = tf.name
+                    found.append({"file": rel, "parsed": parsed})
+                    break
+            walk(child, depth + 1)
+
+    walk(path, 1)
+    return found
 
 
 def get_structure(path: Path, max_depth: int = 3, skip_dirs: set[str] | None = None) -> list[dict[str, Any]]:
@@ -669,6 +828,21 @@ def get_structure(path: Path, max_depth: int = 3, skip_dirs: set[str] | None = N
     return structure
 
 
+_CREDENTIAL_IN_URL_RE = re.compile(r"//[^@/]+@")
+
+
+def _sanitize_remote_url(url: str) -> str:
+    """Mask credentials embedded in a remote URL (tokens, passwords).
+
+    `https://user:token@github.com/x/y.git` -> `https://***@github.com/x/y.git`
+    Query-string tokens are dropped. SSH URLs (`git@host:...`) are untouched.
+    """
+    sanitized = _CREDENTIAL_IN_URL_RE.sub("//***@", url)
+    if "?" in sanitized:
+        sanitized = sanitized.split("?", 1)[0] + "?<redacted>"
+    return sanitized
+
+
 def get_git_context(path: Path) -> dict[str, Any]:
     """Récupère le contexte Git du projet."""
     ctx: dict[str, Any] = {"has_git": False}
@@ -694,10 +868,21 @@ def get_git_context(path: Path) -> dict[str, Any]:
     remotes_raw = _run_git("remote", "-v")
     if remotes_raw:
         remotes = []
+        seen_remotes: set[tuple[str, str]] = set()
         for line in remotes_raw.split("\n"):
             parts = line.split()
             if len(parts) >= 3:
-                remotes.append({"name": parts[0], "url": parts[1], "type": parts[2]})
+                name, url = parts[0], parts[1]
+                key = (name, url)
+                if key in seen_remotes:
+                    # `git remote -v` lists every remote twice (fetch + push).
+                    continue
+                seen_remotes.add(key)
+                remotes.append({
+                    "name": name,
+                    "url": _sanitize_remote_url(url),
+                    "type": parts[2],
+                })
         ctx["remotes"] = remotes
 
     # Detect .gitignore patterns
@@ -705,8 +890,8 @@ def get_git_context(path: Path) -> dict[str, Any]:
     if gitignore.is_file():
         content = _safe_read(gitignore)
         if content:
-            ctx["gitignore_patterns"] = [l.strip() for l in content.split("\n")
-                                         if l.strip() and not l.startswith("#")][:30]
+            ctx["gitignore_patterns"] = [ln.strip() for ln in content.split("\n")
+                                         if ln.strip() and not ln.startswith("#")][:30]
 
     return ctx
 
@@ -751,23 +936,24 @@ def _detect_misc(path: Path) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Hermes Project Oracle — Scan de projet",
+        description="Project Oracle — deep project scanner",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Exemples:\n"
+            "Examples:\n"
             "  python oracle_scan.py --path . --output .oracle/\n"
-            "  python oracle_scan.py -p ~/projet -o rapport.json -d 2 --skip-gitignore\n"
-            "  python oracle_scan.py -p . -o /dev/stdout  # juste stdout\n"
+            "  python oracle_scan.py -p ~/project -o report.json -d 2\n"
+            "  python oracle_scan.py -p . -o /dev/stdout   # print only\n"
         ),
     )
-    parser.add_argument("--path", "-p", default=".", help="Chemin du projet (défaut: .)")
+    parser.add_argument("--path", "-p", default=".", help="Project path (default: .)")
     parser.add_argument("--output", "-o", default=".oracle/scan-report.json",
-                        help="Fichier JSON de sortie (défaut: .oracle/scan-report.json)")
+                        help="Output: a directory (writes scan-report.json inside) or "
+                             "an explicit JSON file path (default: .oracle/scan-report.json)")
     parser.add_argument("--depth", "-d", type=int, default=3,
-                        help="Profondeur max de l'arborescence (défaut: 3)")
+                        help="Max tree depth (default: 3)")
     parser.add_argument("--skip-gitignore", action="store_true",
-                        help="Ne pas ignorer les motifs .gitignore")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Logs détaillés")
+                        help="Do not skip .gitignore patterns")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logs")
     args = parser.parse_args()
 
     if args.verbose:
@@ -776,7 +962,7 @@ def main() -> None:
     # ── Resolve paths ──
     root = Path(args.path).resolve(strict=False)
     if not root.exists():
-        log.error("Le chemin n'existe pas: %s", root)
+        log.error("Path does not exist: %s", root)
         sys.exit(1)
     if root.is_file():
         root = root.parent
@@ -792,16 +978,20 @@ def main() -> None:
     log.debug("Detecting build systems...")
     build_systems = detect_build_system(root)
 
-    # ── Phase 3: Framework ──
-    log.debug("Detecting framework...")
-    # Collect all parsed configs
-    all_parsed = {}
-    for bs in build_systems:
-        if "parsed" in bs:
-            all_parsed[bs["file"]] = bs["parsed"]
-    # Flatten framework detection
+    # ── Phase 2b: Nested manifests (monorepo support) ──
+    nested_packages = _collect_nested_packages(root)
+    for np in nested_packages:
+        build_systems.append({
+            "file": np["file"],
+            "label": f"nested: {Path(np['file']).name}",
+            "parsed": np["parsed"],
+        })
+
+    # ── Phase 3: Frameworks (list — a project usually has several) ──
+    log.debug("Detecting frameworks...")
     scan_context = {"project_path": str(root), "build_systems": build_systems}
-    framework = detect_framework(scan_context)
+    frameworks = detect_frameworks(scan_context)
+    framework = frameworks[0] if frameworks else None
 
     # ── Phase 4: Entry points ──
     log.debug("Finding entry points...")
@@ -810,6 +1000,10 @@ def main() -> None:
     # ── Phase 5: Conventions ──
     log.debug("Detecting conventions...")
     conventions = detect_conventions(root)
+
+    # ── Phase 5b: Environment variables (names only, from example files) ──
+    log.debug("Scanning env example files...")
+    env_vars = detect_env_files(root)
 
     # ── Phase 6: Structure ──
     log.debug("Mapping project structure (depth=%d)...", args.depth)
@@ -831,8 +1025,8 @@ def main() -> None:
 
     # ── Assemble ──
     report = {
-        "tool": "hermes-project-oracle",
-        "version": "1.0.0",
+        "tool": "project-oracle",
+        "version": "2.0.0",
         "scan_time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "project_name": root.name,
         "project_path": str(root),
@@ -841,8 +1035,10 @@ def main() -> None:
         "languages": languages,
         "build_systems": build_systems,
         "framework": framework,
+        "frameworks": frameworks,
         "entry_points": entry_points,
         "conventions": conventions,
+        "env_vars": env_vars,
         "git": git_context,
         "misc": misc,
         "structure": structure,
@@ -852,11 +1048,21 @@ def main() -> None:
     report["scan_duration_seconds"] = round(elapsed, 2)
 
     # ── Output ──
+    # `--output` accepts a directory (`.oracle/` or `.oracle`) OR a file path.
+    # A value ending in a path separator, an existing directory, or a name without
+    # a `.json` suffix is treated as a directory and gets `scan-report.json` inside.
     output_path = Path(args.output)
-    if str(output_path) == "/dev/stdout":
+    if str(output_path) in ("/dev/stdout", "-"):
         json.dump(report, sys.stdout, indent=2, ensure_ascii=False)
         sys.stdout.write("\n")
     else:
+        looks_like_dir = (
+            str(args.output).endswith(("/", "\\"))
+            or output_path.is_dir()
+            or output_path.suffix != ".json"
+        )
+        if looks_like_dir:
+            output_path = output_path / "scan-report.json"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(
             json.dumps(report, indent=2, ensure_ascii=False),
@@ -865,10 +1071,10 @@ def main() -> None:
         log.info("Report written: %s (%d bytes)", output_path, output_path.stat().st_size)
 
     # ── Summary ──
-    lang_str = ", ".join(f"{l['name']} ({l['ratio']}%)" for l in languages[:4]) or "none"
+    lang_str = ", ".join(f"{g['name']} ({g['ratio']}%)" for g in languages[:4]) or "none"
     log.info("Done in %.2fs", elapsed)
     log.info("Languages: %s", lang_str)
-    log.info("Framework: %s", framework or "none detected")
+    log.info("Frameworks: %s", ", ".join(frameworks) if frameworks else "none detected")
     log.info("Files: %d, Dirs: %d | Entries: %d", file_count, dir_count, len(entry_points))
 
 

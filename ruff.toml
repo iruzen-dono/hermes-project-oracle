@@ -1,0 +1,13 @@
+# Ruff configuration — deterministic linting for CI and local.
+# Matches the rule set historically enforced by .github/workflows/ci.yml
+# (ruff's default: E4, E7, E9, F) so behaviour is identical everywhere.
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = [
+    "E4",   # pycodestyle errors (indentation, imports)
+    "E7",   # pycodestyle warnings
+    "E9",   # runtime errors
+    "F",    # pyflakes (unused imports, undefined names)
+]

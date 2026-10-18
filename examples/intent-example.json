@@ -1,0 +1,21 @@
+{
+  "purpose": "A music party app: guests join a room from their phone and vote on what plays next. Built for house parties. The host controls the Spotify playback; guests only vote.",
+  "pitfalls": [
+    {
+      "area": "Spotify tokens",
+      "note": "Refresh tokens live in .data/tokens.json and are written on every refresh. Never log that file, and never commit it — it is gitignored for a reason."
+    },
+    {
+      "area": "Websockets",
+      "note": "Socket.IO rooms must be re-joined after a server restart. If votes stop syncing, the client likely connected before the room existed."
+    },
+    {
+      "area": "Boot order",
+      "note": "HOST_PASSWORD must be set in .env or the server refuses to start. There is no default, by design."
+    },
+    {
+      "area": "Express 5",
+      "note": "Async error handlers are not auto-caught like Express 4. Wrap route handlers or errors vanish silently."
+    }
+  ]
+}
