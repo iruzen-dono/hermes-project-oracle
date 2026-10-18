@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import difflib
 import json
 import logging
 import sys
@@ -126,6 +127,43 @@ def _cite(text: Any) -> str:
 # ── Templates ───────────────────────────────────────────────────────────────
 
 
+def _language_commands(report: dict[str, Any]) -> list[tuple[str, list[str]]]:
+    """Evidence-based toolchain commands for Python, Rust and Go.
+
+    A group is only produced when its manifest actually exists at the project
+    root (``pyproject.toml``/``setup.py``, ``Cargo.toml``, ``go.mod``) — a
+    command is never invented from a language count alone. Test and lint
+    commands are added only when the scan found real configuration
+    (pytest in detected test frameworks, ruff/black configured).
+    """
+    root_manifests = {
+        Path(str(bs.get("file", ""))).name
+        for bs in report.get("build_systems", [])
+        if not str(bs.get("label", "")).startswith("nested:")
+    }
+    conv = report.get("conventions", {})
+    groups: list[tuple[str, list[str]]] = []
+
+    if root_manifests & {"pyproject.toml", "setup.py", "setup.cfg"}:
+        cmds = ["python -m pip install -e ."]
+        if "pytest" in (conv.get("test_frameworks") or []):
+            cmds.append("python -m pytest")
+        quality = set(conv.get("quality_tools") or [])
+        if quality & {"ruff.toml", ".ruff.toml"}:
+            cmds.append("ruff check .")
+        if conv.get("python_formatter") == "Black":
+            cmds.append("black .")
+        groups.append(("Python", cmds))
+
+    if "Cargo.toml" in root_manifests:
+        groups.append(("Rust", ["cargo build", "cargo test"]))
+
+    if "go.mod" in root_manifests:
+        groups.append(("Go", ["go build ./...", "go test ./..."]))
+
+    return groups
+
+
 def render_agents_md(report: dict[str, Any]) -> str:
     """Generate a complete, standard AGENTS.md."""
     name = report.get("project_name", "project")
@@ -226,6 +264,15 @@ def render_agents_md(report: dict[str, Any]) -> str:
         lines.append("### Commands (from package.json)")
         for k, v in list(npm_scripts.items())[:12]:
             lines.append(f"- `{run} {k}` → `{v}`")
+        lines.append("")
+
+    # Per-language toolchain commands (Python / Rust / Go) — only when the
+    # root manifest that makes them real was seen during the scan.
+    lang_cmds = _language_commands(report)
+    if lang_cmds:
+        lines.append("### Language commands")
+        for lang, cmds in lang_cmds:
+            lines.append(f"- **{lang}**: " + " · ".join(f"`{c}`" for c in cmds))
         lines.append("")
 
     if nested_bs:
@@ -597,22 +644,21 @@ def _wrap_markers(content: str) -> str:
     return f"{MARKER_START}\n{content.strip()}\n{MARKER_END}\n"
 
 
-def write_output(out_path: Path, content: str, force: bool) -> str:
-    """Write `content` without clobbering existing work.
+def render_final(out_path: Path, content: str, force: bool) -> tuple[str, str]:
+    """Compute the final text `out_path` SHOULD contain, without writing it.
 
-    Rules:
-      * file missing            -> create (wrapped in markers for later in-place
-                                   updates; frontmatter files stay untouched)
-      * file has oracle markers -> replace ONLY what is between them
-      * file exists, no markers -> refuse with exit code 2 unless `force`;
-                                   with `force` the old file is saved to `.bak`
+    Same decision rules as `write_output`:
+      * file missing            -> markers-wrapped content (frontmatter files
+                                   are left untouched by `_wrap_markers`)
+      * file has oracle markers -> ONLY the text between them is replaced
+      * file exists, no markers -> refuse with exit code 2 unless `force`
 
-    Returns one of: "created", "merged", "overwritten".
+    Returns ``(final_text, action)`` with action in
+    ``{"created", "merged", "overwritten"}``. Nothing is written and no
+    backup is made — `--check`/`--diff` rely on that purity.
     """
     if not out_path.exists():
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write(out_path, _wrap_markers(content))
-        return "created"
+        return _wrap_markers(content), "created"
 
     existing = out_path.read_text(encoding="utf-8")
     start = existing.find(MARKER_START)
@@ -625,10 +671,7 @@ def write_output(out_path: Path, content: str, force: bool) -> str:
             + "\n"
             + existing[end:]
         )
-        atomic_write(out_path, merged)
-        log.info("Updated marked section in %s — text outside markers preserved",
-                 out_path)
-        return "merged"
+        return merged, "merged"
 
     if not force:
         log.error(
@@ -641,14 +684,64 @@ def write_output(out_path: Path, content: str, force: bool) -> str:
         )
         sys.exit(2)
 
-    backup = out_path.with_name(out_path.name + ".bak")
-    atomic_write(backup, existing)
-    atomic_write(out_path, _wrap_markers(content))
-    log.warning("Overwrote %s — previous content saved to %s", out_path, backup)
-    return "overwritten"
+    return _wrap_markers(content), "overwritten"
+
+
+def write_output(out_path: Path, content: str, force: bool) -> str:
+    """Write `content` without clobbering existing work (see `render_final`
+    for the decision rules). Backs up to `.bak` before an overwrite.
+
+    Returns one of: "created", "merged", "overwritten".
+    """
+    final, action = render_final(out_path, content, force)
+    if action == "created":
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    elif action == "merged":
+        log.info("Updated marked section in %s — text outside markers preserved",
+                 out_path)
+    elif action == "overwritten":
+        existing = out_path.read_text(encoding="utf-8")
+        backup = out_path.with_name(out_path.name + ".bak")
+        atomic_write(backup, existing)
+        log.warning("Overwrote %s — previous content saved to %s", out_path, backup)
+    atomic_write(out_path, final)
+    return action
 
 
 # ── Main ────────────────────────────────────────────────────────────────────
+
+
+def _plan_outputs(args: argparse.Namespace,
+                  project_name: str) -> list[tuple[str, Path, Any]]:
+    """Resolve ``(template_name, out_path, renderer)`` for the selected template(s).
+
+    Extracted from ``main`` so the write path and the ``--check``/``--diff``
+    dry-run path resolve destinations identically.
+    """
+    if args.template == "full":
+        plan: list[tuple[str, Path, Any]] = []
+        for tname, (fname, renderer) in TEMPLATES.items():
+            if args.output.endswith(fname):
+                out_path = Path(args.output)
+            else:
+                out_path = (
+                    Path(args.output) / fname
+                    if Path(args.output).is_dir()
+                    else Path(args.output)
+                )
+            plan.append((tname, out_path, renderer))
+        return plan
+
+    fname, renderer = TEMPLATES[args.template]
+    output_map = {
+        "agents-md": f"{project_name}-AGENTS.md",
+        "claude-md": f"{project_name}-CLAUDE.md",
+        "obsidian": f"{project_name}.md",
+    }
+    out_path = Path(args.output)
+    if out_path.is_dir():
+        out_path = out_path / output_map.get(args.template, fname)
+    return [(args.template, out_path, renderer)]
 
 
 def main() -> None:
@@ -678,6 +771,15 @@ def main() -> None:
                              "is saved to a .bak file). Without it, existing files are "
                              "only updated in place when they carry "
                              f"{MARKER_START}/{MARKER_END} markers")
+    parser.add_argument("--check", action="store_true",
+                        help="Dry run: write nothing, print "
+                             '{"changed": ..., "paths": [...]} and exit 3 when the '
+                             "output would differ from what is on disk (0 when up "
+                             "to date)")
+    parser.add_argument("--diff", action="store_true",
+                        help="Dry run: write nothing, print a unified diff of the "
+                             "pending changes to stdout and exit 3 when non-empty "
+                             "(0 when up to date)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logs")
     args = parser.parse_args()
 
