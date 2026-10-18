@@ -49,17 +49,22 @@ Save the answers as `intent.json` (see `examples/intent-example.json`):
 ### 2. Scan
 
 ```bash
-python <skill_dir>/scripts/oracle_scan.py --path <project> --output .oracle/
+python <skill_dir>/scripts/oracle_scan.py --path <project> --output <project>/.oracle/
 ```
 
 `--output` accepts a directory (`.oracle/` or `.oracle`) or an explicit JSON
-file path. The directory form writes `.oracle/scan-report.json`. Flags:
-`--depth N` (tree depth, default 3), `--skip-gitignore`, `--verbose`.
+file path. The directory form writes `.oracle/scan-report.json`. Keep the
+output **inside** the scanned project (as shown) so it stays out of version
+control. Flags: `--depth N` (tree depth, default 3), `--skip-gitignore`,
+`--verbose`.
 
 The report contains languages, **all** detected frameworks, build systems,
 runnable npm scripts, entry points, test frameworks + test-file counts,
 environment variable **names** (never values), git context with **credential-
-masked** remotes, and the project tree.
+masked** remotes, an auto-detected project summary, and the project tree.
+The report carries **no absolute paths** (it is safe to share), and when the
+project has a `.gitignore`, `.oracle/` is added to it so the scan output
+stays out of version control.
 
 ### 3. Generate
 
@@ -72,14 +77,26 @@ python <skill_dir>/scripts/oracle_generate.py \
 ```
 
 Templates: `agents-md`, `claude-md`, `obsidian`, `full` (all three in one pass).
-Omit `--intent-file` if the user skipped the interview.
+Omit `--intent-file` if the user skipped the interview — the generator then
+falls back to an auto-detected summary (pyproject `description` or README).
+
+**Existing files are never clobbered silently:**
+
+- Target does not exist → created (wrapped in `<!-- oracle:start -->` …
+  `<!-- oracle:end -->` markers so later runs update it in place).
+- Target exists and carries the markers → only the marked section is
+  regenerated; the user's text outside the markers is preserved.
+- Target exists without markers → the generator refuses (exit 2). Ask the
+  user, then re-run with `--force` (the previous file is saved as `.bak`).
 
 ### 4. Verify before you save
 
 - Read the generated file. Do the commands, frameworks, and env var names look right?
 - Confirm **no secrets** and **no absolute paths** leaked in.
-- If `AGENTS.md` / `CLAUDE.md` already existed, show the user a diff and ask
-  before overwriting — the project may have a hand-tuned file worth preserving.
+- If `AGENTS.md` / `CLAUDE.md` already existed without markers, the script
+  already refused to touch it. Show the user the diff, and only pass
+  `--force` after they confirm — the project may have a hand-tuned file
+  worth preserving (its `.bak` backup is kept either way).
 
 ### 5. Vault (optional)
 

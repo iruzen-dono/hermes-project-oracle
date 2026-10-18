@@ -23,28 +23,40 @@ touches code.
 - **Build system + test detection** — Maven, Gradle, npm/yarn/pnpm/bun, uv/pip, Cargo, Go modules, Composer; Jest, Vitest, pytest, JUnit, and test-file counts
 - **Monorepo aware** — nested manifests discovered up to 2 levels deep
 - **Intent + pitfalls interview** — embeds project purpose and known landmines
+- **Safe regeneration** — an existing file is never clobbered silently: content
+  between `<!-- oracle:start/end -->` markers is refreshed in place (your edits
+  outside survive), anything else requires `--force` and keeps a `.bak` backup
 - **Multi-template output** — AGENTS.md, CLAUDE.md, Obsidian note, or all in one pass
 - **Cross-platform** — `pathlib` everywhere, no platform-specific code
 
 ## Install
 
+Install from the packaged skill zip — it contains only what the skill needs
+(`SKILL.md`, `scripts/`, `references/`, `examples/`), not `.git/`, tests or
+build artifacts:
+
 ```bash
 git clone https://github.com/iruzen-dono/hermes-project-oracle.git
+cd hermes-project-oracle
+python package_skill.py          # builds hermes-project-oracle.zip + validates it
 
 # Claude Code / generic SKILL.md agents
-cp -r hermes-project-oracle ~/.claude/skills/hermes-project-oracle
+unzip hermes-project-oracle.zip -d ~/.claude/skills/
 
 # Hermes Agent
-cp -r hermes-project-oracle ~/.hermes/skills/hermes-project-oracle
+unzip hermes-project-oracle.zip -d ~/.hermes/skills/
 ```
+
+On Windows (PowerShell): `Expand-Archive hermes-project-oracle.zip -DestinationPath $HOME\.claude\skills\`
 
 ## Quick start
 
 ```bash
 SKILL=~/.claude/skills/hermes-project-oracle
 
-# 1. Scan a project (writes .oracle/scan-report.json)
-python $SKILL/scripts/oracle_scan.py --path /path/to/project --output .oracle/
+# 1. Scan a project (writes <project>/.oracle/scan-report.json,
+#    and adds .oracle/ to the project's .gitignore when missing)
+python $SKILL/scripts/oracle_scan.py --path /path/to/project --output /path/to/project/.oracle/
 
 # 2. Generate AGENTS.md, embedding the interview answers
 python $SKILL/scripts/oracle_generate.py \

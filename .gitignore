@@ -8,3 +8,5 @@ build/
 .DS_Store
 Thumbs.db
 .ruff_cache/
+*.zip 
+.venv/ 

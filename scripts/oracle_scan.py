@@ -18,6 +18,7 @@ JSON file path (`report.json`). Cross-platform: Windows, Linux, macOS.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import logging
 import re
@@ -27,6 +28,11 @@ import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+
+try:
+    from version import __version__
+except ImportError:  # scripts/ not on sys.path — visible, not silently wrong
+    __version__ = "unknown"
 
 # ── Logging ─────────────────────────────────────────────────────────────────
 
@@ -64,6 +70,8 @@ _SKIP_DIRS = {
     ".mypy_cache", ".pytest_cache", ".ruff_cache", ".hypothesis",
     ".stack-work", "result", "_build", "deps",
     "third_party", "third-party", "3rdparty",
+    # Never scan our own output — a second run must not count itself.
+    ".oracle",
 }
 
 _SKIP_EXTENSIONS = {
@@ -177,10 +185,33 @@ def _detect_python(pyproject: Path | None) -> dict[str, Any]:
     if bs:
         result["build_system"] = bs.group(1)
 
-    # Dependencies (quick scan)
-    deps = re.findall(r'(?:^|\n)(\w[\w.-]+)\s*[=~<>!]', content)
-    if deps:
-        result["deps_sample"] = deps[:30]
+    # Structured parse (PEP 621 / Poetry) — tomllib, stdlib 3.11+
+    import tomllib as _tomllib
+    try:
+        data = _tomllib.loads(content)
+    except Exception:
+        data = None
+    if data:
+        proj = data.get("project", {}) or {}
+        # PEP 621: list of requirement strings; Poetry: name->spec table.
+        deps: list[str] = list(_flat_deps(proj.get("dependencies", [])))
+        for group in (proj.get("optional-dependencies") or {}).values():
+            deps.extend(_flat_deps(group))
+        poetry = ((data.get("tool") or {}).get("poetry") or {})
+        if not deps:
+            deps = [d for d in _flat_deps(poetry.get("dependencies", {}))
+                    if d.lower() != "python"]
+        if deps:
+            result["deps_sample"] = deps[:30]
+        # Issue #5: heuristic project summary straight from the manifest.
+        if isinstance(proj.get("description"), str) and proj["description"].strip():
+            result["description"] = proj["description"].strip()[:300]
+        # Issue #3: [project.scripts] are declared entry points.
+        scripts_tbl = proj.get("scripts") or {}
+        if isinstance(scripts_tbl, dict) and scripts_tbl:
+            result["console_scripts"] = {
+                str(k): str(v) for k, v in list(scripts_tbl.items())[:15]
+            }
 
     # Framework detection
     for fw, hints in [
@@ -197,6 +228,25 @@ def _detect_python(pyproject: Path | None) -> dict[str, Any]:
             break
 
     return result
+
+
+def _flat_deps(d: Any) -> list[str]:
+    """Extract bare package names from a dependency container.
+
+    Accepts PEP 621's list of requirement strings ("flask>=3.0",
+    "requests[security]~=2.31") or a Poetry-style mapping ({name: spec}).
+    """
+    if isinstance(d, dict):
+        return [str(name) for name in d]
+    out: list[str] = []
+    if isinstance(d, list):
+        for item in d:
+            if not isinstance(item, str):
+                continue
+            name = re.split(r"[\s\[<>=!~;#@]", item.strip(), 1)[0].strip()
+            if name:
+                out.append(name)
+    return out
 
 
 _NODE_FRAMEWORKS: list[tuple[str, str]] = [
@@ -478,6 +528,11 @@ def detect_entry_points(path: Path) -> list[dict[str, str]]:
         "app.py": "application_entry",
         "cli.py": "cli_entry",
         "run.py": "application_entry",
+        "server.py": "server_entry",
+        "bootstrap.py": "bootstrap_entry",
+        "wsgi.py": "wsgi_entry",
+        "asgi.py": "asgi_entry",
+        "manage.py": "django_entry",
         "artisan": "laravel_cli",
         "Program.cs": "dotnet_entry",
         "main.rs": "rust_entry",
@@ -491,6 +546,8 @@ def detect_entry_points(path: Path) -> list[dict[str, str]]:
         "src/main.ts": "ts_entry",
         "src/main.js": "js_entry",
         "src/main.rs": "rust_entry",
+        "src/server.py": "server_entry",
+        "src/cli.py": "cli_entry",
         "lib/main.dart": "flutter_entry",
     }
 
@@ -517,6 +574,44 @@ def detect_entry_points(path: Path) -> list[dict[str, str]]:
                     continue
                 entries.append({"path": str(rel.as_posix()), "type": "spring_boot_entry"})
 
+    # Declared console scripts: [project.scripts] in pyproject.toml (issue #3)
+    pyproject_toml = path / "pyproject.toml"
+    if pyproject_toml.is_file():
+        try:
+            import tomllib as _tl
+            pdata = _tl.loads(pyproject_toml.read_text(encoding="utf-8"))
+            scripts_tbl = ((pdata.get("project") or {}).get("scripts") or {})
+            for cname, target in list(scripts_tbl.items())[:10]:
+                entries.append({
+                    "path": f"pyproject.toml:{cname}",
+                    "type": f"console_script -> {target}",
+                })
+        except Exception:
+            pass
+
+    # Python entry points: `if __name__ == "__main__"` verified with ast
+    # (covers server.py, bootstrap.py or any script without a canonical name).
+    for py_file in sorted(path.glob("*.py")) + sorted(path.glob("src/*.py")):
+        if py_file.name.startswith("_"):
+            continue
+        try:
+            tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, ValueError):
+            continue
+        has_main = any(
+            isinstance(node, ast.If)
+            and isinstance(node.test, ast.Compare)
+            and isinstance(node.test.left, ast.Name)
+            and node.test.left.id == "__name__"
+            for node in ast.walk(tree)
+        )
+        if has_main:
+            try:
+                rel = py_file.relative_to(path)
+            except ValueError:
+                continue
+            entries.append({"path": str(rel.as_posix()), "type": "python_main"})
+
     # Deduplicate by path
     seen = set()
     unique = []
@@ -534,7 +629,7 @@ def detect_conventions(path: Path) -> dict[str, Any]:
 
     # ── Test frameworks ──
     test_markers: dict[str, list[str]] = {
-        "pytest": ["pytest.ini", "conftest.py", "pyproject.toml"],
+        "pytest": ["pytest.ini", "conftest.py"],
         "JUnit 5": ["pom.xml", "build.gradle"],
         "Jest": ["jest.config.js", "jest.config.ts", "jest.config.mjs"],
         "Vitest": ["vitest.config.ts", "vitest.config.js"],
@@ -553,11 +648,6 @@ def detect_conventions(path: Path) -> dict[str, Any]:
             if f.is_file():
                 detected_tests.append(framework)
                 break
-            # Check content for pyproject/pom.xml/gradle
-            if marker == "pyproject.toml":
-                content = _safe_read(path / "pyproject.toml")
-                if content and framework.lower() in content.lower():
-                    detected_tests.append(framework)
             if marker == "pom.xml":
                 content = _safe_read(path / "pom.xml")
                 if content and "junit" in content.lower():
@@ -570,6 +660,26 @@ def detect_conventions(path: Path) -> dict[str, Any]:
                 content = _safe_read(path / marker)
                 if content and "junit" in content.lower():
                     detected_tests.append(framework)
+
+    # ── pytest: positive evidence only (issue: pyproject alone is NOT proof) ──
+    pyproject_path = path / "pyproject.toml"
+    if pyproject_path.is_file():
+        try:
+            import tomllib as _tl
+            pdata = _tl.loads(pyproject_path.read_text(encoding="utf-8"))
+            has_cfg = isinstance(pdata.get("tool", {}).get("pytest"), dict)
+            deps_list: list[str] = []
+            proj_tbl = pdata.get("project", {}) or {}
+            deps_list.extend(_flat_deps(proj_tbl.get("dependencies", [])))
+            for grp in (proj_tbl.get("optional-dependencies") or {}).values():
+                deps_list.extend(_flat_deps(grp))
+            for grp in (pdata.get("dependency-groups") or {}).values():
+                deps_list.extend(_flat_deps(grp))
+            has_dep = any(d.lower().startswith("pytest") for d in deps_list)
+            if (has_cfg or has_dep) and "pytest" not in detected_tests:
+                detected_tests.append("pytest")
+        except Exception:
+            pass
 
     # ── Test frameworks from package.json dependencies ──
     # Reading actual dependencies is more reliable than hunting config files.
@@ -613,6 +723,60 @@ def detect_conventions(path: Path) -> dict[str, Any]:
     ]
     conv["quality_tools"] = [f for f in lint_files if (path / f).is_file()]
 
+    # ── Detected settings — never invent rules, only report observed ones ──
+    line_length = None
+    line_length_source = None
+    for toml_name in ("ruff.toml", ".ruff.toml", "pyproject.toml"):
+        toml_path = path / toml_name
+        if not toml_path.is_file():
+            continue
+        try:
+            import tomllib as _tl
+            tdata = _tl.loads(toml_path.read_text(encoding="utf-8"))
+            # line-length may sit at the root (standalone ruff.toml), under
+            # [ruff], under [tool.ruff] or under [tool.black] (pyproject).
+            candidates = [
+                (tdata, f"from {toml_name}"),
+                (tdata.get("ruff") or {}, f"from {toml_name} [ruff]"),
+                ((tdata.get("tool") or {}).get("ruff") or {},
+                 f"from {toml_name} [tool.ruff]"),
+                ((tdata.get("tool") or {}).get("black") or {},
+                 f"from {toml_name} [tool.black]"),
+            ]
+            for tbl, src in candidates:
+                if isinstance(tbl, dict) and isinstance(tbl.get("line-length"), int):
+                    line_length = tbl["line-length"]
+                    line_length_source = src
+                    break
+            if line_length is not None:
+                break
+        except Exception:
+            continue
+    if line_length is None and (path / ".editorconfig").is_file():
+        ec = _safe_read(path / ".editorconfig") or ""
+        m = re.search(r"max_line_length\s*=\s*(\d+)", ec)
+        if m:
+            line_length = int(m.group(1))
+            line_length_source = "from .editorconfig"
+    if line_length is not None:
+        conv["line_length"] = line_length
+        conv["line_length_source"] = line_length_source
+
+    # Formatter: only when a config actually declares it.
+    try:
+        import tomllib as _tl
+        if (path / "pyproject.toml").is_file():
+            _pd = _tl.loads((path / "pyproject.toml").read_text(encoding="utf-8"))
+            if isinstance((_pd.get("tool") or {}).get("black"), dict):
+                conv["python_formatter"] = "Black"
+        if "python_formatter" not in conv and (
+            (path / "ruff.toml").is_file() or (path / ".ruff.toml").is_file()
+            or "ruff.toml" in conv.get("quality_tools", [])
+        ):
+            conv["python_formatter"] = "Ruff"
+    except Exception:
+        pass
+
     # ── CI/CD ──
     ci_markers = [
         (".github/workflows", "GitHub Actions"),
@@ -643,6 +807,25 @@ def detect_conventions(path: Path) -> dict[str, Any]:
         conv["commit_convention"] = "conventional-commits (git-cliff)"
     elif (path / ".github/semantic.yml").is_file():
         conv["commit_convention"] = "semantic-prs"
+    elif (path / ".git").exists():
+        # Observe the history instead of guessing (evidence, not invention).
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(path), "log", "--oneline", "-30"],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=5,
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                sample = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+                conv_re = re.compile(
+                    r"^\w+ (feat|fix|chore|docs|refactor|test|style|perf|build|ci)"
+                    r"(\([^)]*\))?!?:"
+                )
+                hits = sum(1 for ln in sample if conv_re.search(ln))
+                if sample and hits / len(sample) >= 0.6:
+                    conv["commit_convention"] = "conventional-commits (observed in git log)"
+        except Exception:
+            pass
 
     # ── Editor ──
     if (path / ".vscode").is_dir():
@@ -928,6 +1111,32 @@ def _detect_misc(path: Path) -> dict[str, Any]:
     )
     misc["template_count"] = template_count
 
+    # Issue #5: heuristic project summary — first real paragraph of the README.
+    for readme_name in ("README.md", "readme.md", "README.rst"):
+        readme_path = path / readme_name
+        if not readme_path.is_file():
+            continue
+        try:
+            text = readme_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            break
+        para: list[str] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if (stripped.startswith(("#", "!", "[", "<", "-", "*", "|", "```"))
+                    or not stripped):
+                if para:
+                    break
+                continue
+            para.append(stripped)
+            if sum(len(p) for p in para) > 240:
+                break
+        if para:
+            summary = " ".join(para)[:300]
+            if len(summary) > 40:
+                misc["readme_summary"] = summary
+        break
+
     return misc
 
 
@@ -1024,12 +1233,24 @@ def main() -> None:
                     and not any(s in _.parts for s in _SKIP_DIRS))
 
     # ── Assemble ──
+    # Heuristic project summary (issue #5): manifest description first,
+    # first README paragraph second — the interview remains optional.
+    summary = None
+    for bs in build_systems:
+        parsed = bs.get("parsed", {})
+        if isinstance(parsed, dict) and parsed.get("description"):
+            summary = parsed["description"]
+            break
+    if not summary:
+        summary = misc.get("readme_summary")
+
     report = {
         "tool": "project-oracle",
-        "version": "2.0.0",
+        "version": __version__,
         "scan_time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "project_name": root.name,
-        "project_path": str(root),
+        # NOTE: no absolute path here — the report must be shareable.
+        "summary": summary,
         "file_count": file_count,
         "dir_count": dir_count,
         "languages": languages,
@@ -1069,6 +1290,24 @@ def main() -> None:
             encoding="utf-8",
         )
         log.info("Report written: %s (%d bytes)", output_path, output_path.stat().st_size)
+
+        # Keep the scan output out of the project's VCS (issue: dirty repo).
+        # Only touches an EXISTING .gitignore, and only when missing the rule.
+        try:
+            resolved_out = output_path.resolve()
+            if resolved_out.is_relative_to(root):
+                gitignore = root / ".gitignore"
+                if gitignore.is_file():
+                    gi = gitignore.read_text(encoding="utf-8", errors="replace")
+                    if not any(line.strip() in (".oracle", ".oracle/", "/.oracle/")
+                               for line in gi.splitlines()):
+                        sep = "" if gi.endswith("\n") or not gi else "\n"
+                        gitignore.write_text(
+                            gi + sep + ".oracle/\n", encoding="utf-8"
+                        )
+                        log.info("Added .oracle/ to %s", gitignore)
+        except OSError as exc:
+            log.debug("Could not update .gitignore: %s", exc)
 
     # ── Summary ──
     lang_str = ", ".join(f"{g['name']} ({g['ratio']}%)" for g in languages[:4]) or "none"

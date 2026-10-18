@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -268,6 +269,241 @@ class TestEndToEnd(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue(out.exists())
         self.assertFalse(out.is_dir())
+
+
+class TestPythonProjectRegressions(unittest.TestCase):
+    """Regression tests for code-review findings, against a Python fixture.
+
+    Covers: #1 overwrite protection, #2 dependencies + invented conventions,
+    #3 entry points + pytest false positive, #5 auto summary,
+    #6 self-scan / absolute paths / .gitignore, #7 packaging validation.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.proj = self.root / "acme-api"
+        self.proj.mkdir()
+        (self.proj / "pyproject.toml").write_text(
+            "[project]\n"
+            'name = "acme-api"\n'
+            'description = "Tiny service that serves acme widgets for the demo dashboard."\n'
+            'dependencies = ["flask>=3.0", "requests~=2.31"]\n'
+            "\n"
+            "[project.scripts]\n"
+            'acme-cli = "cli:main"\n'
+            "\n"
+            "[tool.ruff]\n"
+            "line-length = 100\n",
+            encoding="utf-8",
+        )
+        (self.proj / "server.py").write_text(
+            '"""Server entry point."""\n\n\n'
+            "def create_app():\n"
+            "    return None\n\n\n"
+            'if __name__ == "__main__":\n'
+            "    create_app()\n",
+            encoding="utf-8",
+        )
+        (self.proj / "bootstrap.py").write_text(
+            "def boot():\n    pass\n", encoding="utf-8"
+        )
+        (self.proj / "cli.py").write_text(
+            "def main():\n    print('hi')\n", encoding="utf-8"
+        )
+        (self.proj / "app").mkdir()
+        (self.proj / "app" / "__init__.py").write_text("", encoding="utf-8")
+        (self.proj / "README.md").write_text(
+            "# acme-api\n\n"
+            "Serves acme widgets over HTTP for the demo dashboard team.\n",
+            encoding="utf-8",
+        )
+        (self.proj / ".gitignore").write_text("dist/\n", encoding="utf-8")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _scan(self):
+        # Output INSIDE the project — the documented usage (`--output .oracle/`).
+        oracle = self.proj / ".oracle"
+        r = _run(SCAN, "--path", str(self.proj), "--output", str(oracle) + "/")
+        self.assertEqual(r.returncode, 0, f"scan failed: {r.stderr}")
+        report_path = oracle / "scan-report.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        return report_path, report
+
+    # ── Issue #2: real dependencies from pyproject (tomllib, not regex) ──
+
+    def test_issue2_real_dependencies_detected(self):
+        _, report = self._scan()
+        pyproject_bs = next(
+            bs for bs in report["build_systems"] if bs["file"] == "pyproject.toml"
+        )
+        deps = pyproject_bs["parsed"].get("deps_sample", [])
+        self.assertIn("flask", deps, f"flask missing from {deps}")
+        self.assertIn("requests", deps, f"requests missing from {deps}")
+        # The old regex leaked manifest KEYS as if they were dependencies.
+        for bogus in ("name", "description", "dependencies", "version"):
+            self.assertNotIn(bogus, deps, f"manifest key '{bogus}' leaked into deps")
+
+    # ── Issue #3: entry points from patterns, [project.scripts], __main__ ──
+
+    def test_issue3_entry_points_detected(self):
+        _, report = self._scan()
+        paths = {ep["path"] for ep in report["entry_points"]}
+        self.assertIn("server.py", paths, f"entry_points: {report['entry_points']}")
+        self.assertIn("bootstrap.py", paths, f"entry_points: {report['entry_points']}")
+        self.assertTrue(
+            any(p.startswith("pyproject.toml:acme-cli") for p in paths),
+            f"[project.scripts] not surfaced: {report['entry_points']}",
+        )
+
+    # ── Issue #3: pyproject alone must NOT declare pytest ──
+
+    def test_issue3_no_pytest_false_positive(self):
+        _, report = self._scan()
+        self.assertNotIn(
+            "pytest", report["conventions"]["test_frameworks"],
+            "pyproject.toml without any pytest evidence must not imply pytest",
+        )
+
+
+    # ── Issue #2: CLAUDE.md must detect conventions, never invent them ──
+
+    def test_issue2_claude_md_contains_no_invented_conventions(self):
+        report_path, _ = self._scan()
+        out = self.proj / "CLAUDE.md"
+        r = _run(GENERATE, "--scan", str(report_path), "--template", "claude-md",
+                 "--output", str(out))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        claude = out.read_text(encoding="utf-8")
+        for invented in ("88 chars", "Google style", "BEFORE code",
+                         "type hints required", "Conventional commits"):
+            self.assertNotIn(invented, claude, f"invented convention: {invented}")
+        # Detected facts ARE reported (ruff line-length in pyproject).
+        self.assertIn("100 characters", claude)
+
+    # ── Issue #1: never overwrite an existing file without consent ──
+
+    def test_issue1_refuses_overwrite_without_force(self):
+        report_path, _ = self._scan()
+        out = self.proj / "AGENTS.md"
+        out.write_text("HAND EDIT — do not lose me.\n", encoding="utf-8")
+        r = _run(GENERATE, "--scan", str(report_path), "--template", "agents-md",
+                 "--output", str(out))
+        self.assertEqual(r.returncode, 2,
+                         f"expected exit 2, got {r.returncode}: {r.stderr}")
+        self.assertEqual(out.read_text(encoding="utf-8"),
+                         "HAND EDIT — do not lose me.\n",
+                         "file was modified despite refusal")
+
+    def test_issue1_force_overwrites_with_backup(self):
+        report_path, _ = self._scan()
+        out = self.proj / "AGENTS.md"
+        out.write_text("HAND EDIT — do not lose me.\n", encoding="utf-8")
+        r = _run(GENERATE, "--scan", str(report_path), "--template", "agents-md",
+                 "--output", str(out), "--force")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        new_content = out.read_text(encoding="utf-8")
+        self.assertIn("## Stack", new_content)
+        backup = out.with_name("AGENTS.md.bak")
+        self.assertTrue(backup.exists(), "--force must save a .bak backup")
+        self.assertEqual(backup.read_text(encoding="utf-8"),
+                         "HAND EDIT — do not lose me.\n")
+
+    def test_issue1_markers_enable_inplace_updates(self):
+        report_path, _ = self._scan()
+        out = self.proj / "AGENTS.md"
+        # Fresh create: wrapped in markers automatically.
+        r = _run(GENERATE, "--scan", str(report_path), "--template", "agents-md",
+                 "--output", str(out))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        first = out.read_text(encoding="utf-8")
+        self.assertIn("<!-- oracle:start -->", first)
+        # A user appends a personal note OUTSIDE the marked section...
+        out.write_text(first + "\nMY PERSONAL NOTE\n", encoding="utf-8")
+        # ...then regenerates: note survives, marked body is refreshed.
+        r = _run(GENERATE, "--scan", str(report_path), "--template", "agents-md",
+                 "--output", str(out))
+        self.assertEqual(r.returncode, 0,
+                         f"regeneration with markers must not need --force: {r.stderr}")
+        merged = out.read_text(encoding="utf-8")
+        self.assertIn("MY PERSONAL NOTE", merged, "text outside markers was lost")
+        self.assertIn("## Stack", merged)
+
+    # ── Issue #5: heuristic summary without an interview ──
+
+    def test_issue5_auto_summary_without_interview(self):
+        report_path, report = self._scan()
+        self.assertTrue(report.get("summary"), "report.summary must be filled")
+        out = self.proj / "AGENTS.md"
+        r = _run(GENERATE, "--scan", str(report_path), "--template", "agents-md",
+                 "--output", str(out))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        md = out.read_text(encoding="utf-8")
+        self.assertIn("Project summary", md)
+        self.assertIn("acme widgets", md)
+
+
+    # ── Issue #6: no self-scan, no absolute paths, VCS stays clean ──
+
+    def test_issue6_second_scan_does_not_count_itself(self):
+        _, first = self._scan()
+        _, second = self._scan()
+        self.assertEqual(first["file_count"], second["file_count"],
+                         "a second scan counted .oracle/ output")
+        self.assertEqual(first["dir_count"], second["dir_count"],
+                         "a second scan counted the .oracle directory")
+
+    def test_issue6_report_is_shareable_and_gitignore_updated(self):
+        _, report = self._scan()
+        dump = json.dumps(report)
+        self.assertNotIn(str(self.proj), dump,
+                         "absolute path leaked into the scan report")
+        self.assertNotIn("project_path", report,
+                         "absolute project_path must not be in the report")
+        gi = (self.proj / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn(".oracle", gi,
+                      "scan must keep its output out of the project's VCS")
+
+    # ── Issue #7: package validation must be falsifiable and -O-safe ──
+
+    def test_issue7_validate_archive_catches_nested_skill_md(self):
+        sys.path.insert(0, str(REPO_ROOT))
+        try:
+            import package_skill
+        finally:
+            sys.path.pop(0)
+        with tempfile.TemporaryDirectory() as td:
+            bad_zip = Path(td) / "bad.zip"
+            with zipfile.ZipFile(bad_zip, "w") as zf:
+                zf.writestr("hermes-project-oracle/SKILL.md", "---\nname: x\n")
+                zf.writestr("hermes-project-oracle/nested/SKILL.md", "dup")
+                zf.writestr("hermes-project-oracle/scripts/run.py", "print(1)\n")
+            errors = package_skill.validate_archive(
+                bad_zip, "hermes-project-oracle"
+            )
+        self.assertTrue(errors, "nested SKILL.md must be reported as an error")
+        self.assertTrue(any("SKILL.md" in e for e in errors), errors)
+
+    def test_issue7_ship_filter_excludes_dev_artifacts(self):
+        sys.path.insert(0, str(REPO_ROOT))
+        try:
+            import package_skill
+        finally:
+            sys.path.pop(0)
+        cases = {
+            REPO_ROOT / "hermes-project-oracle.zip": False,
+            REPO_ROOT / "tests" / "test_oracle.py": False,
+            REPO_ROOT / ".github" / "workflows" / "ci.yml": False,
+            REPO_ROOT / ".venv" / "lib" / "x.py": False,
+            REPO_ROOT / ".env": False,
+            REPO_ROOT / "SKILL.md": True,
+            REPO_ROOT / "scripts" / "oracle_scan.py": True,
+        }
+        for path, expected in cases.items():
+            with self.subTest(path=str(path)):
+                self.assertEqual(package_skill.should_ship(path), expected)
 
 
 if __name__ == "__main__":
