@@ -244,7 +244,7 @@ def detect_conventions(path: Path) -> dict[str, Any]:
 
 
 def _is_monorepo(path: Path) -> bool:
-    """Heuristique simple pour détecter un monorepo."""
+    """Simple heuristic to detect a monorepo."""
     markers = 0
     # Multiple build systems
     builds = 0

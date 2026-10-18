@@ -2,7 +2,7 @@
 """
 Project Oracle — deep project scanner.
 
-Analyses a codebase in depth and produces a structured JSON report covering
+Analyzes a codebase in depth and produces a structured JSON report covering
 languages, frameworks, build systems, entry points, conventions, environment
 variable names, git context, and project tree. Zero dependencies.
 

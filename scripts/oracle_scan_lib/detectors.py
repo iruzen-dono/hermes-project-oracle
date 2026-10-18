@@ -23,7 +23,7 @@ from oracle_scan_lib.io import read_maybe_rooted as _read_maybe_rooted
 
 
 def _find_config(path: Path, *names: str) -> Path | None:
-    """Cherche le premier fichier de config existant."""
+    """Find the first existing config file among ``names``."""
     for name in names:
         p = path / name
         if p.is_file():

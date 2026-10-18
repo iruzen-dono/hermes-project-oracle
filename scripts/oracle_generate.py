@@ -708,6 +708,49 @@ def write_output(out_path: Path, content: str, force: bool) -> str:
     return action
 
 
+def _dry_run(plan: list[tuple[str, Path, Any]], report: dict[str, Any],
+             show_diff: bool, force: bool) -> int:
+    """Implement ``--check`` / ``--diff``: compute drift without writing anything.
+
+    For every planned output, compute the text ``write_output`` WOULD put on
+    disk (markers-aware) and compare it with the file currently there. Prints
+    ``{"changed": bool, "paths": [...]}`` on stdout, plus a unified diff to
+    stdout when ``show_diff``. Returns the process exit code: 3 when at least
+    one output would change, 0 when everything is already up to date.
+
+    ``force`` is passed as True so that an existing marker-less file is
+    reported as drift instead of aborting with the overwrite refusal: the
+    question answered here is "would the bytes change", not "may I write".
+    """
+    changed_paths: list[str] = []
+    for tname, out_path, renderer in plan:
+        try:
+            content = renderer(report)
+        except Exception as exc:  # noqa: BLE001 — a broken report must not kill a drift check
+            log.error("Failed to render %s: %s", tname, exc)
+            continue
+        final, action = render_final(out_path, content, force)
+        existing = out_path.read_text(encoding="utf-8") if out_path.exists() else None
+        if existing == final:
+            log.info("Up to date: %s", out_path)
+            continue
+        changed_paths.append(str(out_path))
+        if show_diff:
+            sys.stdout.writelines(
+                difflib.unified_diff(
+                    (existing or "").splitlines(keepends=True),
+                    final.splitlines(keepends=True),
+                    fromfile=f"a/{out_path}",
+                    tofile=f"b/{out_path}",
+                )
+            )
+        else:
+            verb = "create" if existing is None else f"write ({action})"
+            log.info("Would %s: %s", verb, out_path)
+    print(json.dumps({"changed": bool(changed_paths), "paths": changed_paths}))
+    return 3 if changed_paths else 0
+
+
 # ── Main ────────────────────────────────────────────────────────────────────
 
 
@@ -815,13 +858,15 @@ def main() -> None:
             log.warning("Intent file not found, ignoring: %s", intent_path)
 
     # ── Render ──
+    plan = _plan_outputs(args, project_name)
+
+    # Dry run: --check / --diff never touch the filesystem.
+    if args.check or args.diff:
+        sys.exit(_dry_run(plan, report, show_diff=args.diff, force=True))
+
     if args.template == "full":
         generated = []
-        for tname, (fname, renderer) in TEMPLATES.items():
-            if args.output.endswith(fname):
-                out_path = Path(args.output)
-            else:
-                out_path = Path(args.output) / fname if Path(args.output).is_dir() else Path(args.output)
+        for tname, out_path, renderer in plan:
             try:
                 content = renderer(report)
                 write_output(out_path, content, args.force)
@@ -833,15 +878,7 @@ def main() -> None:
                 log.error("Failed to generate %s: %s", tname, exc)
         print(json.dumps({"generated": generated}))
     else:
-        fname, renderer = TEMPLATES[args.template]
-        output_map = {
-            "agents-md": f"{project_name}-AGENTS.md",
-            "claude-md": f"{project_name}-CLAUDE.md",
-            "obsidian": f"{project_name}.md",
-        }
-        out_path = Path(args.output)
-        if out_path.is_dir():
-            out_path = out_path / output_map.get(args.template, fname)
+        _tname, out_path, renderer = plan[0]
         try:
             content = renderer(report)
             action = write_output(out_path, content, args.force)

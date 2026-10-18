@@ -6,6 +6,9 @@
 #   SIM  — simplify (collapsible ifs, contextlib.suppress, needless bool)
 #   PERF — perflist (list-comprehension instead of manual loop append)
 #   UP   — pyupgrade (idiomatic modern Python)
+# BLE/try-except handling stays explicit: the few broad `except Exception`
+# blocks are deliberate (a malformed manifest must never abort a scan) and
+# each carries a targeted `# noqa: BLE001` with its justification.
 # Deliberately NOT enabled: S/bandit (S603/S607 false positives on the
 # intentional git/npm subprocess calls) and C90/mccabe complexity — both add
 # noise without catching real defects here.
