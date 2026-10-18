@@ -12,6 +12,7 @@ the real implementations below are used.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import tempfile
 from pathlib import Path
@@ -75,8 +76,6 @@ def atomic_write(target: Path, content: str,
             fh.write(content)
         os.replace(tmp_name, str(target))
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_name)
-        except OSError:
-            pass
         raise

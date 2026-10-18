@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
 import sys
@@ -41,9 +42,9 @@ except ImportError:  # standalone copy — minimal atomic fallback (temp + repla
         if target.is_symlink():
             raise ValueError(
                 f"refusing to write through an existing symlink: {target}")
-        if must_stay_under_root is not None:
-            if not target.resolve().is_relative_to(must_stay_under_root.resolve()):
-                raise ValueError(f"refusing to write outside the root: {target}")
+        if (must_stay_under_root is not None
+                and not target.resolve().is_relative_to(must_stay_under_root.resolve())):
+            raise ValueError(f"refusing to write outside the root: {target}")
         target.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=str(target.parent),
                                    prefix=f".{target.name}.", suffix=".tmp")
@@ -52,10 +53,8 @@ except ImportError:  # standalone copy — minimal atomic fallback (temp + repla
                 fh.write(content)
             os.replace(tmp, str(target))
         except BaseException:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp)
-            except OSError:
-                pass
             raise
 
 # ── Logging ─────────────────────────────────────────────────────────────────
@@ -106,9 +105,7 @@ def _sanitize_untrusted(text: Any) -> str:
             return False
         if o < 0x20 or o in (0x7F, 0x85):  # C0 + DEL + NEL
             return False
-        if 0x80 <= o <= 0x9F:  # C1
-            return False
-        return True
+        return not (0x80 <= o <= 0x9F)  # C1
 
     flat = "".join(ch for ch in str(text) if _keep(ch))
     flat = " ".join(flat.split())
@@ -266,8 +263,7 @@ def render_agents_md(report: dict[str, Any]) -> str:
     # Entry points
     if entries:
         lines.append("## Entry points")
-        for ep in entries[:8]:
-            lines.append(f"- `{ep['path']}` — {ep['type']}")
+        lines.extend(f"- `{ep['path']}` — {ep['type']}" for ep in entries[:8])
         if len(entries) > 8:
             lines.append(f"- *... and {len(entries) - 8} more*")
         lines.append("")
@@ -309,8 +305,9 @@ def render_agents_md(report: dict[str, Any]) -> str:
         lines.append(f"- **Branch**: `{git.get('branch', '?')}`")
         if git.get("remotes"):
             lines.append("- **Remote(s)**:")
-            for r in git["remotes"][:3]:
-                lines.append(f"  - `{r['name']}` → {r['url']}")
+            lines.extend(
+                f"  - `{r['name']}` → {r['url']}" for r in git["remotes"][:3]
+            )
         if git.get("commit_count"):
             lines.append(f"- **Commits**: {git['commit_count']}")
         lines.append("")
@@ -442,8 +439,7 @@ def render_claude_md(report: dict[str, Any]) -> str:
     # Tests — only when there is real evidence (config or test files on disk)
     if conventions.get("test_frameworks"):
         lines.append("## Tests")
-        for tf in conventions["test_frameworks"]:
-            lines.append(f"- Test runner: `{tf}`")
+        lines.extend(f"- Test runner: `{tf}`" for tf in conventions["test_frameworks"])
         if conventions.get("test_file_count"):
             lines.append(
                 f"- {conventions['test_file_count']} test file(s) found on disk"
@@ -500,10 +496,11 @@ def render_obsidian(report: dict[str, Any]) -> str:
     now = datetime.now()
 
     tags = ["project"]
-    for fw in frameworks[:3]:
-        tags.append(fw.lower().replace(" ", "-").replace("/", "-").replace(".", ""))
-    for g in langs[:3]:
-        tags.append(g["key"])
+    tags.extend(
+        fw.lower().replace(" ", "-").replace("/", "-").replace(".", "")
+        for fw in frameworks[:3]
+    )
+    tags.extend(g["key"] for g in langs[:3])
 
     lines = [
         "---",
@@ -539,8 +536,10 @@ def render_obsidian(report: dict[str, Any]) -> str:
     if git.get("has_git"):
         lines.append("## Git")
         lines.append(f"- **Branch**: `{git.get('branch', '?')}`")
-        for r in git.get("remotes", [])[:3]:
-            lines.append(f"- `{r['name']}`: `{r['url']}`")
+        lines.extend(
+            f"- `{r['name']}`: `{r['url']}`"
+            for r in git.get("remotes", [])[:3]
+        )
         lines.append("")
 
     conv = report.get("conventions", {})

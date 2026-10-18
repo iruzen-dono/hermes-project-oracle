@@ -37,19 +37,18 @@ except ImportError:  # scripts/ not on sys.path — visible, not silently wrong
 try:
     from safe_io import atomic_write
 except ImportError:  # standalone copy — minimal atomic fallback (temp + replace)
+    import contextlib
     import os
     import tempfile
 
-    def atomic_write(target: Path, content: str,
-                     must_stay_under_root: Path | None = None) -> None:
+    def atomic_write(target: Path, content: str, root: Path | None = None) -> None:
         """Fallback atomic write (see safe_io.atomic_write for the full contract)."""
         target = Path(target)
         if target.is_symlink():
             raise ValueError(
                 f"refusing to write through an existing symlink: {target}")
-        if must_stay_under_root is not None:
-            if not target.resolve().is_relative_to(must_stay_under_root.resolve()):
-                raise ValueError(f"refusing to write outside the root: {target}")
+        if root is not None and not target.resolve().is_relative_to(root.resolve()):
+            raise ValueError(f"refusing to write outside the root: {target}")
         target.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=str(target.parent),
                                    prefix=f".{target.name}.", suffix=".tmp")
@@ -58,11 +57,31 @@ except ImportError:  # standalone copy — minimal atomic fallback (temp + repla
                 fh.write(content)
             os.replace(tmp, str(target))
         except BaseException:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp)
-            except OSError:
-                pass
             raise
+
+# The scanner and its helpers ship as a package next to this script; make the
+# scripts/ directory importable whether this file is run as a script
+# (sys.path[0] = scripts/) or imported from the repo root.
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from oracle_scan_lib.constants import (  # noqa: E402
+    ENV_EXAMPLE_NAMES as _ENV_EXAMPLE_NAMES,
+    LANGUAGE_MAP as _LANGUAGE_MAP,
+    NODE_FRAMEWORKS as _NODE_FRAMEWORKS,
+    NODE_TEST_PACKAGES as _NODE_TEST_PACKAGES,
+    SKIP_DIRS as _SKIP_DIRS,
+    SKIP_EXTENSIONS as _SKIP_EXTENSIONS,
+    sanitize_remote_url as _sanitize_remote_url,
+)
+from oracle_scan_lib.io import (  # noqa: E402
+    load_toml as _load_toml,
+    read_maybe_rooted as _read_maybe_rooted,
+    safe_read as _safe_read,
+)
 
 # ── Logging ─────────────────────────────────────────────────────────────────
 
@@ -76,102 +95,7 @@ log = logging.getLogger("oracle-scan")
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
-def _read_in_root(target: Path, root: Path, max_bytes: int = 50_000) -> str | None:
-    """Read a file ONLY if it stays inside the project root.
-
-    A symlink whose ``resolve()`` escapes the root (e.g. ``pyproject.toml ->
-    /etc/...``) is refused, so no content outside the scanned project can
-    leak into the report or into the generated context files.
-    """
-    try:
-        resolved_root = root.resolve()
-        resolved_target = target.resolve()
-    except OSError:
-        return None
-    if not resolved_target.is_relative_to(resolved_root):
-        log.debug("Refusing symlink escaping the project root: %s", target)
-        return None
-    return _safe_read(resolved_target, max_bytes=max_bytes)
-
-
-def _safe_read(path: Path, max_bytes: int = 50_000) -> str | None:
-    """Lit un fichier texte si sa taille est raisonnable."""
-    try:
-        if not path.is_file():
-            return None
-        if path.stat().st_size > max_bytes:
-            log.debug("Skipping large file (%d bytes): %s", path.stat().st_size, path)
-            return None
-        return path.read_text(encoding="utf-8", errors="replace")
-    except PermissionError:
-        log.debug("Permission denied: %s", path)
-        return None
-    except Exception as exc:
-        log.debug("Cannot read %s: %s", path, exc)
-
-
-def _read_maybe_rooted(target: Path | None, root: Path | None) -> str | None:
-    """Read a manifest, enforcing the root boundary when root is provided."""
-    if not target:
-        return None
-    if root:
-        return _read_in_root(target, root)
-    return _safe_read(target)
-
-
-_SKIP_DIRS = {
-    ".git", "node_modules", ".venv", "venv", "env", ".env", "__pycache__",
-    "target", "build", "dist", ".gradle", ".next", ".nuxt", ".output",
-    ".vercel", ".cache", "vendor", "bundle", ".tox", ".eggs", "eggs",
-    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".hypothesis",
-    ".stack-work", "result", "_build", "deps",
-    "third_party", "third-party", "3rdparty",
-    # Never scan our own output — a second run must not count itself.
-    ".oracle",
-}
-
-_SKIP_EXTENSIONS = {
-    ".pyc", ".pyo", ".so", ".dll", ".dylib", ".class", ".jar", ".war",
-    ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar",
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg",
-    ".woff", ".woff2", ".ttf", ".eot",
-    ".mp3", ".mp4", ".avi", ".mov", ".mkv",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-    ".o", ".obj", ".lib", ".a",
-    ".min.js", ".min.css",
-    ".map", ".br",
-}
-
-_LANGUAGE_MAP: dict[str, tuple[str, str]] = {
-    ".py": ("Python", "python"),
-    ".java": ("Java", "java"),
-    ".kt": ("Kotlin", "kotlin"),
-    ".kts": ("Kotlin Script", "kotlin"),
-    ".ts": ("TypeScript", "typescript"),
-    ".tsx": ("TypeScript React", "typescript"),
-    ".js": ("JavaScript", "javascript"),
-    ".jsx": ("JavaScript React", "javascript"),
-    ".mjs": ("JavaScript (ESM)", "javascript"),
-    ".cjs": ("JavaScript (CJS)", "javascript"),
-    ".go": ("Go", "go"),
-    ".rs": ("Rust", "rust"),
-    ".php": ("PHP", "php"),
-    ".cs": ("C#", "csharp"),
-    ".rb": ("Ruby", "ruby"),
-    ".swift": ("Swift", "swift"),
-    ".dart": ("Dart", "dart"),
-    ".vue": ("Vue", "vue"),
-    ".svelte": ("Svelte", "svelte"),
-    ".astro": ("Astro", "astro"),
-    ".sql": ("SQL", "sql"),
-    ".r": ("R", "r"),
-    ".scala": ("Scala", "scala"),
-    ".ex": ("Elixir", "elixir"),
-    ".exs": ("Elixir Script", "elixir"),
-    ".clj": ("Clojure", "clojure"),
-    ".hs": ("Haskell", "haskell"),
-    ".ml": ("OCaml", "ocaml"),
-}
+# (I/O helpers and constant tables moved to oracle_scan_lib — see imports above.)
 
 
 # ── Detection functions ─────────────────────────────────────────────────────
@@ -207,9 +131,9 @@ def detect_languages(path: Path) -> list[dict[str, Any]]:
         seen.add(key)
         # Find the best display name for this key
         display = key
-        for ext, (name, k) in _LANGUAGE_MAP.items():
-            if k == key and name:
-                display = name
+        for lang_name, lang_key in _LANGUAGE_MAP.values():
+            if lang_key == key and lang_name:
+                display = lang_name
                 break
         result.append({
             "key": key,
@@ -307,26 +231,27 @@ def _flat_deps(d: Any) -> list[str]:
         for item in d:
             if not isinstance(item, str):
                 continue
-            name = re.split(r"[\s\[<>=!~;#@]", item.strip(), 1)[0].strip()
+            name = re.split(r"[\s\[<>=!~;#@]", item.strip(), maxsplit=1)[0].strip()
             if name:
                 out.append(name)
     return out
 
 
-_NODE_FRAMEWORKS: list[tuple[str, str]] = [
-    # (package name, display name) — meta-frameworks first, then servers, then UI libs.
-    ("next", "Next.js"), ("nuxt", "Nuxt"), ("remix", "Remix"), ("gatsby", "Gatsby"),
-    ("astro", "Astro"), ("@angular/core", "Angular"), ("angular", "Angular"),
-    ("@nestjs/core", "NestJS"), ("nest", "NestJS"),
-    ("express", "Express"), ("fastify", "Fastify"), ("koa", "Koa"), ("hapi", "Hapi"),
-    ("socket.io", "Socket.IO"),
-    ("react", "React"), ("react-native", "React Native"), ("expo", "Expo"),
-    ("vue", "Vue"), ("svelte", "Svelte"), ("solid-js", "SolidJS"),
-    ("vite", "Vite"), ("webpack", "Webpack"), ("tailwindcss", "Tailwind CSS"),
-]
+# (Node framework/test tables moved to oracle_scan_lib.constants.)
 
-_NODE_TEST_PACKAGES = ("jest", "vitest", "mocha", "playwright", "@playwright/test",
-                       "cypress", "ava", "tap")
+
+def _dedupe(items: list[str]) -> list[str]:
+    """Stable dedupe preserving first-seen order."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for it in items:
+        if it not in seen:
+            seen.add(it)
+            out.append(it)
+    return out
+
+
+# (_load_toml moved to oracle_scan_lib.io.)
 
 
 def _detect_node(package_json: Path | None, root: Path | None = None) -> dict[str, Any]:
@@ -358,8 +283,7 @@ def _detect_node(package_json: Path | None, root: Path | None = None) -> dict[st
 
     # Framework detection — collect ALL matches, not just the first.
     frameworks = [display for pkg, display in _NODE_FRAMEWORKS if pkg in all_deps]
-    seen_fw: set[str] = set()
-    result["frameworks"] = [fw for fw in frameworks if not (fw in seen_fw or seen_fw.add(fw))]
+    result["frameworks"] = _dedupe(frameworks)
     if result["frameworks"]:
         result["framework"] = result["frameworks"][0]
 
@@ -588,8 +512,7 @@ def detect_frameworks(scan: dict[str, Any]) -> list[str]:
                 break
 
     # Dedupe, keep order
-    seen: set[str] = set()
-    return [fw for fw in fws if not (fw in seen or seen.add(fw))]
+    return _dedupe(fws)
 
 
 def detect_entry_points(path: Path) -> list[dict[str, str]]:
@@ -650,19 +573,14 @@ def detect_entry_points(path: Path) -> list[dict[str, str]]:
                 entries.append({"path": str(rel.as_posix()), "type": "spring_boot_entry"})
 
     # Declared console scripts: [project.scripts] in pyproject.toml (issue #3)
-    pyproject_toml = path / "pyproject.toml"
-    if pyproject_toml.is_file():
-        try:
-            import tomllib as _tl
-            pdata = _tl.loads(_read_maybe_rooted(pyproject_toml, path))
-            scripts_tbl = ((pdata.get("project") or {}).get("scripts") or {})
-            for cname, target in list(scripts_tbl.items())[:10]:
-                entries.append({
-                    "path": f"pyproject.toml:{cname}",
-                    "type": f"console_script -> {target}",
-                })
-        except Exception:
-            pass
+    pdata = _load_toml(_read_maybe_rooted(path / "pyproject.toml", path))
+    if pdata:
+        scripts_tbl = ((pdata.get("project") or {}).get("scripts") or {})
+        for cname, target in list(scripts_tbl.items())[:10]:
+            entries.append({
+                "path": f"pyproject.toml:{cname}",
+                "type": f"console_script -> {target}",
+            })
 
     # Python entry points: `if __name__ == "__main__"` verified with ast
     # (covers server.py, bootstrap.py or any script without a canonical name).
@@ -737,11 +655,9 @@ def detect_conventions(path: Path) -> dict[str, Any]:
                     detected_tests.append(framework)
 
     # ── pytest: positive evidence only (issue: pyproject alone is NOT proof) ──
-    pyproject_path = path / "pyproject.toml"
-    if pyproject_path.is_file():
+    pdata = _load_toml(_read_maybe_rooted(path / "pyproject.toml", path))
+    if pdata:
         try:
-            import tomllib as _tl
-            pdata = _tl.loads(_read_maybe_rooted(pyproject_path, path))
             has_cfg = isinstance(pdata.get("tool", {}).get("pytest"), dict)
             deps_list: list[str] = []
             proj_tbl = pdata.get("project", {}) or {}
@@ -811,8 +727,9 @@ def detect_conventions(path: Path) -> dict[str, Any]:
         if not toml_path.is_file():
             continue
         try:
-            import tomllib as _tl
-            tdata = _tl.loads(_read_maybe_rooted(toml_path, path))
+            tdata = _load_toml(_read_maybe_rooted(toml_path, path))
+            if tdata is None:
+                continue
             # line-length may sit at the root (standalone ruff.toml), under
             # [ruff], under [tool.ruff] or under [tool.black] (pyproject).
             candidates = [
@@ -844,9 +761,8 @@ def detect_conventions(path: Path) -> dict[str, Any]:
 
     # Formatter: only when a config actually declares it.
     try:
-        import tomllib as _tl
         if (path / "pyproject.toml").is_file():
-            _pd = _tl.loads(_read_maybe_rooted(path / "pyproject.toml", path))
+            _pd = _load_toml(_read_maybe_rooted(path / "pyproject.toml", path)) or {}
             if isinstance((_pd.get("tool") or {}).get("black"), dict):
                 conv["python_formatter"] = "Black"
         if "python_formatter" not in conv and (
@@ -951,7 +867,7 @@ def _is_monorepo(path: Path) -> bool:
     return markers >= 2
 
 
-_ENV_EXAMPLE_NAMES = (".env.example", ".env.sample", ".env.template", ".env.dist")
+# (Example env-file names moved to oracle_scan_lib.constants.ENV_EXAMPLE_NAMES.)
 
 
 def _parse_env_names(content: str) -> list[str]:
@@ -1103,19 +1019,7 @@ def get_structure(path: Path, max_depth: int = 3, skip_dirs: set[str] | None = N
     return structure
 
 
-_CREDENTIAL_IN_URL_RE = re.compile(r"//[^@/]+@")
-
-
-def _sanitize_remote_url(url: str) -> str:
-    """Mask credentials embedded in a remote URL (tokens, passwords).
-
-    `https://user:token@github.com/x/y.git` -> `https://***@github.com/x/y.git`
-    Query-string tokens are dropped. SSH URLs (`git@host:...`) are untouched.
-    """
-    sanitized = _CREDENTIAL_IN_URL_RE.sub("//***@", url)
-    if "?" in sanitized:
-        sanitized = sanitized.split("?", 1)[0] + "?<redacted>"
-    return sanitized
+# (URL credential masking moved to oracle_scan_lib.constants.sanitize_remote_url.)
 
 
 def get_git_context(path: Path) -> dict[str, Any]:
@@ -1189,10 +1093,11 @@ def _detect_misc(path: Path) -> dict[str, Any]:
     misc["code_of_conduct"] = (path / "CODE_OF_CONDUCT.md").is_file()
 
     # Config files at root
-    config_files = []
-    for f in path.iterdir():
-        if f.is_file() and f.suffix in (".yaml", ".yml", ".toml", ".json", ".ini", ".cfg", ".conf"):
-            config_files.append(f.name)
+    config_files = [
+        f.name for f in path.iterdir()
+        if f.is_file()
+        and f.suffix in (".yaml", ".yml", ".toml", ".json", ".ini", ".cfg", ".conf")
+    ]
     misc["config_files"] = config_files[:20]
 
     # Template engines

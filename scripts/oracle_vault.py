@@ -12,6 +12,7 @@ Usage:
     python oracle_vault.py --content "# My note" --name my-project
 """
 
+import contextlib
 import json
 import re
 import sys
@@ -30,9 +31,9 @@ except ImportError:  # standalone copy — minimal atomic fallback (temp + repla
         if target.is_symlink():
             raise ValueError(
                 f"refusing to write through an existing symlink: {target}")
-        if must_stay_under_root is not None:
-            if not target.resolve().is_relative_to(must_stay_under_root.resolve()):
-                raise ValueError(f"refusing to write outside the root: {target}")
+        if (must_stay_under_root is not None
+                and not target.resolve().is_relative_to(must_stay_under_root.resolve())):
+            raise ValueError(f"refusing to write outside the root: {target}")
         target.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=str(target.parent),
                                    prefix=f".{target.name}.", suffix=".tmp")
@@ -41,10 +42,8 @@ except ImportError:  # standalone copy — minimal atomic fallback (temp + repla
                 fh.write(content)
             os.replace(tmp, str(target))
         except BaseException:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp)
-            except OSError:
-                pass
             raise
 
 # Characters that must never appear in a single path component.

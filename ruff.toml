@@ -1,6 +1,14 @@
 # Ruff configuration — deterministic linting for CI and local.
-# Matches the rule set historically enforced by .github/workflows/ci.yml
-# (ruff's default: E4, E7, E9, F) so behaviour is identical everywhere.
+# Extends the historical set (ruff's default: E4, E7, E9, F) with a pragmatic
+# selection that improves robustness/readability without drowning the code in
+# `noqa` comments:
+#   B    — flake8-bugbear (real footguns: unused loop vars, ambiguous re.split…)
+#   SIM  — simplify (collapsible ifs, contextlib.suppress, needless bool)
+#   PERF — perflist (list-comprehension instead of manual loop append)
+#   UP   — pyupgrade (idiomatic modern Python)
+# Deliberately NOT enabled: S/bandit (S603/S607 false positives on the
+# intentional git/npm subprocess calls) and C90/mccabe complexity — both add
+# noise without catching real defects here.
 line-length = 100
 target-version = "py311"
 
@@ -10,4 +18,8 @@ select = [
     "E7",   # pycodestyle warnings
     "E9",   # runtime errors
     "F",    # pyflakes (unused imports, undefined names)
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "PERF", # perflist
+    "UP",   # pyupgrade
 ]
