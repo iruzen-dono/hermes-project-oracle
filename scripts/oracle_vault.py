@@ -13,8 +13,23 @@ Usage:
 """
 
 import json
+import re
 import sys
 from pathlib import Path
+
+# Characters that must never appear in a single path component.
+_UNSAFE_CHARS = re.compile(r'[/\\<>:"|?*\x00]')
+
+
+def safe_component(value: str, fallback: str = "project") -> str:
+    """Reduce user input to ONE safe path component (no traversal possible).
+
+    `--name "../../escape"` becomes `escape`; `--category "../evil"` becomes
+    `evil`. Anything empty or dot-only falls back to a sane default.
+    """
+    flat = str(value).replace("\\", "/").split("/")[-1].strip()
+    cleaned = _UNSAFE_CHARS.sub("_", flat).strip(". ")
+    return cleaned[:120] or fallback
 
 
 def resolve_vault(configured_path: str | None = None) -> Path | None:
@@ -35,11 +50,32 @@ def resolve_vault(configured_path: str | None = None) -> Path | None:
 
 
 def push_to_vault(vault: Path, project_name: str, content: str,
-                  category: str = "05 - Projets") -> Path:
-    """Write the note into the vault's category folder."""
-    target_dir = vault / category
+                  category: str = "05 - Projets", force: bool = False) -> Path:
+    """Write the note into the vault's category folder.
+
+    Safety guarantees:
+    * name and category are reduced to a single path component — a crafted
+      ``--name ../../escape`` can never write outside the vault;
+    * the final resolved path is verified to stay under the vault root;
+    * an existing note is NEVER overwritten silently (edited notes are
+      human knowledge): without ``force`` this raises FileExistsError,
+      with ``force`` a ``.bak`` copy is kept first.
+    """
+    vault_root = vault.resolve()
+    target_dir = vault_root / safe_component(category, "Projets")
+    note_path = (target_dir / f"{safe_component(project_name)}.md").resolve()
+    if not note_path.is_relative_to(vault_root):
+        raise ValueError(f"refusing to write outside the vault: {note_path}")
+
     target_dir.mkdir(parents=True, exist_ok=True)
-    note_path = target_dir / f"{project_name}.md"
+    if note_path.exists():
+        if not force:
+            raise FileExistsError(
+                f"{note_path} already exists — pass --force to overwrite "
+                f"(a .bak copy will be kept)"
+            )
+        backup = note_path.with_suffix(".md.bak")
+        backup.write_text(note_path.read_text(encoding="utf-8"), encoding="utf-8")
     note_path.write_text(content, encoding="utf-8")
     return note_path
 
@@ -76,7 +112,9 @@ def main():
                         help="Optional intent.json to embed in the note")
     parser.add_argument("--vault", "-v", default=None, help="Path to the Obsidian vault")
     parser.add_argument("--category", default="05 - Projets",
-                        help="Category folder inside the vault")
+                        help="Category folder inside the vault (single folder name)")
+    parser.add_argument("--force", action="store_true",
+                        help="Overwrite an existing note (a .bak copy is kept)")
     args = parser.parse_args()
 
     if not args.scan and not args.content:
@@ -102,7 +140,13 @@ def main():
         print(json.dumps({"error": "Obsidian vault not found. Pass --vault manually."}))
         sys.exit(1)
 
-    note_path = push_to_vault(vault, name, content, args.category)
+    try:
+        note_path = push_to_vault(vault, name, content, args.category,
+                                  force=args.force)
+    except (FileExistsError, ValueError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        print(json.dumps({"error": str(exc)}))
+        sys.exit(2)
     print(json.dumps({"path": str(note_path), "vault": str(vault)}))
     print(f"[ok] Note created: {note_path}", file=sys.stderr)
 

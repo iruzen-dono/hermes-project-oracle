@@ -201,11 +201,19 @@ def _detect_python(pyproject: Path | None) -> dict[str, Any]:
         if not deps:
             deps = [d for d in _flat_deps(poetry.get("dependencies", {}))
                     if d.lower() != "python"]
+        # Poetry also declares dependency groups (dev, test, …).
+        for grp in (poetry.get("group") or {}).values():
+            if isinstance(grp, dict):
+                deps.extend(d for d in _flat_deps(grp.get("dependencies", {}))
+                            if d.lower() != "python")
         if deps:
             result["deps_sample"] = deps[:30]
         # Issue #5: heuristic project summary straight from the manifest.
         if isinstance(proj.get("description"), str) and proj["description"].strip():
             result["description"] = proj["description"].strip()[:300]
+        elif isinstance(poetry.get("description"), str) and poetry["description"].strip():
+            result["description"] = poetry["description"].strip()[:300]
+            result["description_source"] = "poetry"
         # Issue #3: [project.scripts] are declared entry points.
         scripts_tbl = proj.get("scripts") or {}
         if isinstance(scripts_tbl, dict) and scripts_tbl:
@@ -1123,6 +1131,13 @@ def _detect_misc(path: Path) -> dict[str, Any]:
         readme_path = path / readme_name
         if not readme_path.is_file():
             continue
+        # Security: never read a README that is a symlink escaping the repo —
+        # an external file could leak secrets into the report / AGENTS.md.
+        try:
+            if readme_path.is_symlink() and not readme_path.resolve().is_relative_to(path):
+                continue
+        except OSError:
+            continue
         try:
             text = readme_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -1130,17 +1145,22 @@ def _detect_misc(path: Path) -> dict[str, Any]:
         para: list[str] = []
         for line in text.splitlines():
             stripped = line.strip()
-            if (stripped.startswith(("#", "!", "[", "<", "-", "*", "|", "```"))
-                    or not stripped):
+            # Headers, badges, tables and code fences always end the block.
+            if not stripped or stripped.startswith(("#", "!", "|", "```")):
                 if para:
                     break
+                continue
+            # At paragraph start, skip list/badge/link/HTML openers; but once a
+            # paragraph has begun, keep a continuation line even if it starts
+            # with '[', '-', '*' or '<'.
+            if not para and stripped.startswith(("[", "-", "*", "<")):
                 continue
             para.append(stripped)
             if sum(len(p) for p in para) > 240:
                 break
         if para:
             summary = " ".join(para)[:300]
-            if len(summary) > 40:
+            if len(summary) >= 12:
                 misc["readme_summary"] = summary
         break
 
@@ -1156,7 +1176,7 @@ def _module_docstring(path: Path) -> str | None:
     doc = ast.get_docstring(tree)
     if doc:
         text = " ".join(doc.split())[:300]
-        if len(text) > 40:
+        if len(text) >= 12:
             return text
     return None
 
@@ -1169,6 +1189,12 @@ def _entry_docstring(path: Path) -> tuple[str | None, str | None]:
     ordered += [p for p in sorted(path.glob("*.py"))
                 if p.name.startswith("_") is False and p not in ordered]
     for py in ordered:
+        # Security: never read a script that is a symlink escaping the repo.
+        try:
+            if py.is_symlink() and not py.resolve().is_relative_to(path):
+                continue
+        except OSError:
+            continue
         doc = _module_docstring(py)
         if doc:
             return doc, py.name

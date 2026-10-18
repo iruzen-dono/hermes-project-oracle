@@ -54,6 +54,29 @@ def _bullet(items: list[Any], formatter: callable = str, max_items: int = 10) ->
     return out
 
 
+def _sanitize_untrusted(text: Any) -> str:
+    """Neutralise du texte lu dans le projet scanné avant recopie.
+
+    Le texte d'un dépôt inconnu (README, manifeste, docstring, interview)
+    est réinjecté comme des *consignes* dans AGENTS.md — c'est un vecteur
+    d'injection. On aplatit tout sur une ligne (impossible d'insérer un
+    titre `##`), on neutralise les marqueurs de mise à jour `<!-- oracle:… -->`
+    (sinon la prochaine régénération corrompt le fichier) et on échappe les
+    caractères Markdown restants pour que le texte reste du texte.
+    """
+    flat = " ".join(str(text).split())
+    flat = flat.replace("<!--", "&lt;!--").replace("-->", "--&gt;")
+    flat = flat.replace("`", "'")
+    if len(flat) > 300:
+        flat = flat[:297].rstrip() + "…"
+    return flat
+
+
+def _cite(text: Any) -> str:
+    """Aplatit et présente le texte non fiable comme une citation (blockquote)."""
+    return f"> {_sanitize_untrusted(text)}"
+
+
 # ── Templates ───────────────────────────────────────────────────────────────
 
 
@@ -83,15 +106,44 @@ def render_agents_md(report: dict[str, Any]) -> str:
             f"{datetime.now().strftime('%Y-%m-%d %H:%M')}*"
         ),
         "",
-        "## Stack",
-        f"- **Languages**: {lang_summary}",
-        f"- **Frameworks**: {fw_str}",
-        (
-            f"- **Size**: {report.get('file_count', '?')} files, "
-            f"{report.get('dir_count', '?')} directories"
-        ),
-        "",
     ]
+
+    # Purpose & pitfalls FIRST — agents must grasp the "why" before the "how".
+    # Human knowledge (interview) wins; a heuristic scan summary is a fallback
+    # (issue #5) so a skipped interview never leaves the file without context.
+    # All of this text comes from an untrusted project, so it is flattened,
+    # marker-escaped and quoted, never recopied verbatim as instructions.
+    if intent.get("purpose"):
+        lines.append("## Project intent")
+        lines.append(_cite(intent["purpose"]))
+        lines.append("")
+    elif report.get("summary"):
+        lines.append("## Project summary")
+        lines.append(_cite(report["summary"]))
+        lines.append("")
+        src = report.get("summary_source") or "auto-detected"
+        lines.append(f"*(source: {_sanitize_untrusted(src)})*")
+        lines.append("")
+    if intent.get("pitfalls"):
+        lines.append("## Known pitfalls")
+        lines.append("*(reported by the project owner — read before touching these areas)*")
+        for p in intent["pitfalls"][:15]:
+            if isinstance(p, dict):
+                title = _sanitize_untrusted(p.get("area", "General"))
+                note = _sanitize_untrusted(p.get("note", ""))
+                lines.append(f"- **{title}**: {note}")
+            else:
+                lines.append(f"- {_sanitize_untrusted(p)}")
+        lines.append("")
+
+    lines.append("## Stack")
+    lines.append(f"- **Languages**: {lang_summary}")
+    lines.append(f"- **Frameworks**: {fw_str}")
+    lines.append(
+        f"- **Size**: {report.get('file_count', '?')} files, "
+        f"{report.get('dir_count', '?')} directories"
+    )
+    lines.append("")
 
     # Build systems (root manifests)
     root_bs = [bs for bs in build_systems if not bs.get("label", "").startswith("nested:")]
@@ -216,29 +268,6 @@ def render_agents_md(report: dict[str, Any]) -> str:
             lines.append(f"- **Commits**: {git['commit_count']}")
         lines.append("")
 
-    # Intent & pitfalls — human knowledge a scan cannot see.
-    # Fallback (issue #5): heuristic summary from pyproject/README so a
-    # skipped interview never leaves the file without any description.
-    if intent.get("purpose"):
-        lines.append("## Project intent")
-        lines.append(str(intent["purpose"]).strip())
-        lines.append("")
-    elif report.get("summary"):
-        lines.append("## Project summary")
-        lines.append(f"*(auto-detected: {report['summary']})*")
-        lines.append("")
-    if intent.get("pitfalls"):
-        lines.append("## Known pitfalls")
-        lines.append("*(reported by the project owner — read before touching these areas)*")
-        for p in intent["pitfalls"][:15]:
-            if isinstance(p, dict):
-                title = p.get("area", "General")
-                note = p.get("note", "")
-                lines.append(f"- **{title}**: {note}")
-            else:
-                lines.append(f"- {p}")
-        lines.append("")
-
     # Misc
     if misc:
         extra_lines = []
@@ -260,7 +289,16 @@ def render_agents_md(report: dict[str, Any]) -> str:
     lines.append("")
     lines.append("1. **Read before writing** — inspect existing files and conventions first")
     lines.append("2. **Follow project conventions** (lint, formatting, commit style)")
-    lines.append("3. **Verify lint/build/tests** pass before proposing a change")
+    has_tests = bool(
+        conventions.get("test_frameworks") or conventions.get("test_file_count")
+    )
+    if has_tests:
+        lines.append("3. **Verify lint/build/tests** pass before proposing a change")
+    else:
+        lines.append(
+            "3. **Verify lint/build** passes before proposing a change "
+            "(no test suite detected — do not invent one)"
+        )
     lines.append("4. **Ask for clarification** when a spec or ticket is ambiguous")
     lines.append("5. **Do not modify config files** without asking")
     if conventions.get("editor"):
