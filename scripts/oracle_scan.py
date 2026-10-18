@@ -46,6 +46,24 @@ log = logging.getLogger("oracle-scan")
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
+def _read_in_root(target: Path, root: Path, max_bytes: int = 50_000) -> str | None:
+    """Read a file ONLY if it stays inside the project root.
+
+    A symlink whose ``resolve()`` escapes the root (e.g. ``pyproject.toml ->
+    /etc/...``) is refused, so no content outside the scanned project can
+    leak into the report or into the generated context files.
+    """
+    try:
+        resolved_root = root.resolve()
+        resolved_target = target.resolve()
+    except OSError:
+        return None
+    if not resolved_target.is_relative_to(resolved_root):
+        log.debug("Refusing symlink escaping the project root: %s", target)
+        return None
+    return _safe_read(resolved_target, max_bytes=max_bytes)
+
+
 def _safe_read(path: Path, max_bytes: int = 50_000) -> str | None:
     """Lit un fichier texte si sa taille est raisonnable."""
     try:
@@ -60,7 +78,15 @@ def _safe_read(path: Path, max_bytes: int = 50_000) -> str | None:
         return None
     except Exception as exc:
         log.debug("Cannot read %s: %s", path, exc)
+
+
+def _read_maybe_rooted(target: Path | None, root: Path | None) -> str | None:
+    """Read a manifest, enforcing the root boundary when root is provided."""
+    if not target:
         return None
+    if root:
+        return _read_in_root(target, root)
+    return _safe_read(target)
 
 
 _SKIP_DIRS = {
@@ -173,10 +199,10 @@ def _find_config(path: Path, *names: str) -> Path | None:
     return None
 
 
-def _detect_python(pyproject: Path | None) -> dict[str, Any]:
+def _detect_python(pyproject: Path | None, root: Path | None = None) -> dict[str, Any]:
     """Analyse un projet Python via pyproject.toml."""
     result: dict[str, Any] = {"present": True}
-    content = _safe_read(pyproject) if pyproject else None
+    content = _read_maybe_rooted(pyproject, root)
     if not content:
         return result
 
@@ -273,10 +299,10 @@ _NODE_TEST_PACKAGES = ("jest", "vitest", "mocha", "playwright", "@playwright/tes
                        "cypress", "ava", "tap")
 
 
-def _detect_node(package_json: Path | None) -> dict[str, Any]:
+def _detect_node(package_json: Path | None, root: Path | None = None) -> dict[str, Any]:
     """Analyse un projet Node.js via package.json (frameworks multiples, scripts complets)."""
     result: dict[str, Any] = {"present": True}
-    content = _safe_read(package_json) if package_json else None
+    content = _read_maybe_rooted(package_json, root)
     if not content:
         return result
 
@@ -339,10 +365,10 @@ def _detect_node(package_json: Path | None) -> dict[str, Any]:
     return result
 
 
-def _detect_java_maven(pom: Path | None) -> dict[str, Any]:
+def _detect_java_maven(pom: Path | None, root: Path | None = None) -> dict[str, Any]:
     """Analyse un projet Maven."""
     result: dict[str, Any] = {"present": True}
-    content = _safe_read(pom) if pom else None
+    content = _read_maybe_rooted(pom, root)
     if not content:
         return result
 
@@ -364,10 +390,10 @@ def _detect_java_maven(pom: Path | None) -> dict[str, Any]:
     return result
 
 
-def _detect_gradle(build_file: Path | None) -> dict[str, Any]:
+def _detect_gradle(build_file: Path | None, root: Path | None = None) -> dict[str, Any]:
     """Analyse un projet Gradle."""
     result: dict[str, Any] = {"present": True}
-    content = _safe_read(build_file) if build_file else None
+    content = _read_maybe_rooted(build_file, root)
     if not content:
         return result
 
@@ -383,16 +409,20 @@ def _detect_gradle(build_file: Path | None) -> dict[str, Any]:
     return result
 
 
-def _detect_cargo(cargo_toml: Path | None) -> dict[str, Any]:
+def _detect_cargo(cargo_toml: Path | None, root: Path | None = None) -> dict[str, Any]:
     """Analyse un projet Rust via Cargo.toml."""
     result: dict[str, Any] = {"present": True}
-    content = _safe_read(cargo_toml) if cargo_toml else None
+    content = _read_maybe_rooted(cargo_toml, root)
     if not content:
         return result
 
     name = re.search(r'^name\s*=\s*"([^"]+)"', content, re.MULTILINE)
     if name:
         result["crate_name"] = name.group(1)
+
+    desc = re.search(r'^description\s*=\s*"([^"]+)"', content, re.MULTILINE)
+    if desc:
+        result["description"] = desc.group(1)[:200]
 
     # Detect key frameworks
     for fw, patterns in [
@@ -412,10 +442,10 @@ def _detect_cargo(cargo_toml: Path | None) -> dict[str, Any]:
     return result
 
 
-def _detect_go(go_mod: Path | None) -> dict[str, Any]:
+def _detect_go(go_mod: Path | None, root: Path | None = None) -> dict[str, Any]:
     """Analyse un projet Go via go.mod."""
     result: dict[str, Any] = {"present": True}
-    content = _safe_read(go_mod) if go_mod else None
+    content = _read_maybe_rooted(go_mod, root)
     if not content:
         return result
 
@@ -430,10 +460,10 @@ def _detect_go(go_mod: Path | None) -> dict[str, Any]:
     return result
 
 
-def _detect_php(composer: Path | None) -> dict[str, Any]:
+def _detect_php(composer: Path | None, root: Path | None = None) -> dict[str, Any]:
     """Analyse un projet PHP via composer.json."""
     result: dict[str, Any] = {"present": True}
-    content = _safe_read(composer) if composer else None
+    content = _read_maybe_rooted(composer, root)
     if not content:
         return result
 
@@ -492,7 +522,7 @@ def detect_build_system(path: Path) -> list[dict[str, str]]:
         if f.is_file():
             entry = {"file": f.name, "label": label}
             if scanner:
-                parsed = scanner(f)
+                parsed = scanner(f, path)  # pass project root for symlink guard
                 entry["parsed"] = parsed
             results.append(entry)
 
@@ -594,7 +624,7 @@ def detect_entry_points(path: Path) -> list[dict[str, str]]:
     if pyproject_toml.is_file():
         try:
             import tomllib as _tl
-            pdata = _tl.loads(pyproject_toml.read_text(encoding="utf-8"))
+            pdata = _tl.loads(_read_maybe_rooted(pyproject_toml, path))
             scripts_tbl = ((pdata.get("project") or {}).get("scripts") or {})
             for cname, target in list(scripts_tbl.items())[:10]:
                 entries.append({
@@ -681,7 +711,7 @@ def detect_conventions(path: Path) -> dict[str, Any]:
     if pyproject_path.is_file():
         try:
             import tomllib as _tl
-            pdata = _tl.loads(pyproject_path.read_text(encoding="utf-8"))
+            pdata = _tl.loads(_read_maybe_rooted(pyproject_path, path))
             has_cfg = isinstance(pdata.get("tool", {}).get("pytest"), dict)
             deps_list: list[str] = []
             proj_tbl = pdata.get("project", {}) or {}
@@ -690,6 +720,11 @@ def detect_conventions(path: Path) -> dict[str, Any]:
                 deps_list.extend(_flat_deps(grp))
             for grp in (pdata.get("dependency-groups") or {}).values():
                 deps_list.extend(_flat_deps(grp))
+            # Poetry declares dev/test groups separately (poetry.group.*.dependencies).
+            _poetry = ((pdata.get("tool") or {}).get("poetry") or {})
+            for _grp_tbl in (_poetry.get("group") or {}).values():
+                if isinstance(_grp_tbl, dict):
+                    deps_list.extend(_flat_deps(_grp_tbl.get("dependencies", {})))
             has_dep = any(d.lower().startswith("pytest") for d in deps_list)
             if (has_cfg or has_dep) and "pytest" not in detected_tests:
                 detected_tests.append("pytest")
@@ -747,7 +782,7 @@ def detect_conventions(path: Path) -> dict[str, Any]:
             continue
         try:
             import tomllib as _tl
-            tdata = _tl.loads(toml_path.read_text(encoding="utf-8"))
+            tdata = _tl.loads(_read_maybe_rooted(toml_path, path))
             # line-length may sit at the root (standalone ruff.toml), under
             # [ruff], under [tool.ruff] or under [tool.black] (pyproject).
             candidates = [
@@ -781,7 +816,7 @@ def detect_conventions(path: Path) -> dict[str, Any]:
     try:
         import tomllib as _tl
         if (path / "pyproject.toml").is_file():
-            _pd = _tl.loads((path / "pyproject.toml").read_text(encoding="utf-8"))
+            _pd = _tl.loads(_read_maybe_rooted(path / "pyproject.toml", path))
             if isinstance((_pd.get("tool") or {}).get("black"), dict):
                 conv["python_formatter"] = "Black"
         if "python_formatter" not in conv and (
@@ -921,6 +956,12 @@ def detect_env_files(path: Path) -> dict[str, list[str]]:
     for f in candidates:
         if not f.is_file():
             continue
+        # Security: never read an example file that is a symlink escaping the repo.
+        try:
+            if f.is_symlink() and not f.resolve().is_relative_to(path):
+                continue
+        except OSError:
+            continue
         content = _safe_read(f, max_bytes=20_000)
         if content is None:
             continue
@@ -969,7 +1010,7 @@ def _collect_nested_packages(path: Path, max_depth: int = 2, max_packages: int =
             for tname, scanner in targets.items():
                 tf = child / tname
                 if tf.is_file():
-                    parsed = scanner(tf)
+                    parsed = scanner(tf, path)  # pass project root for symlink guard
                     try:
                         rel = str(tf.relative_to(path).as_posix())
                     except ValueError:
@@ -1000,6 +1041,12 @@ def get_structure(path: Path, max_depth: int = 3, skip_dirs: set[str] | None = N
             if child.name.startswith(".") and child.is_dir():
                 continue
             if child.name in skip_dirs:
+                continue
+            # Security: never traverse or list a symlink escaping the repo root.
+            try:
+                if child.is_symlink() and not child.resolve().is_relative_to(path):
+                    continue
+            except OSError:
                 continue
             try:
                 rel = child.relative_to(path)
@@ -1167,8 +1214,13 @@ def _detect_misc(path: Path) -> dict[str, Any]:
     return misc
 
 
-def _module_docstring(path: Path) -> str | None:
+def _module_docstring(path: Path, root: Path | None = None) -> str | None:
     """First docstring of a Python file, flattened to one line (issue #5)."""
+    try:
+        if root is not None and not path.resolve().is_relative_to(root.resolve()):
+            return None  # symlink escaping the repo root — never read it
+    except OSError:
+        return None
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except (OSError, SyntaxError, ValueError):
@@ -1195,7 +1247,7 @@ def _entry_docstring(path: Path) -> tuple[str | None, str | None]:
                 continue
         except OSError:
             continue
-        doc = _module_docstring(py)
+        doc = _module_docstring(py, path)
         if doc:
             return doc, py.name
     return None, None

@@ -587,6 +587,23 @@ class TestInjectionHardening(unittest.TestCase):
         self.assertNotIn("`", out, "backticks must be escaped")
         self.assertIn("&lt;!--", out)
 
+    def test_sanitize_strips_control_characters(self):
+        """NUL/ESC/C0/C1 and U+2028/2029 must never survive into AGENTS.md.
+
+        A NUL byte makes git treat the file as binary; an ESC byte is
+        interpreted by `cat`/terminals; U+2028/2029 break files invisibly.
+        """
+        sys.path.insert(0, str(SCRIPTS))
+        from oracle_generate import _sanitize_untrusted
+        payload = "hello\x00\x1b[31mworld\u2028end\u2029!\x7f"
+        out = _sanitize_untrusted(payload)
+        for bad in ("\x00", "\x1b", "\u2028", "\u2029", "\x7f"):
+            self.assertNotIn(bad, out, f"control char {bad!r} must be stripped")
+        # The printable residue of the ANSI sequence (e.g. "[31m") may remain as
+        # inert text; the ESC byte itself is what must be gone.
+        self.assertTrue(out.startswith("hello"))
+        self.assertIn("world", out)
+
     def test_agents_md_quotes_summary_and_places_it_first(self):
         sys.path.insert(0, str(SCRIPTS))
         from oracle_generate import render_agents_md
