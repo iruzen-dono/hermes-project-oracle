@@ -24,83 +24,7 @@ def detect_conventions(path: Path) -> dict[str, Any]:
     conv: dict[str, Any] = {}
 
     # ── Test frameworks ──
-    test_markers: dict[str, list[str]] = {
-        "pytest": ["pytest.ini", "conftest.py"],
-        "JUnit 5": ["pom.xml", "build.gradle"],
-        "Jest": ["jest.config.js", "jest.config.ts", "jest.config.mjs"],
-        "Vitest": ["vitest.config.ts", "vitest.config.js"],
-        "Mocha": [".mocharc.js", ".mocharc.yml"],
-        "PHPUnit": ["phpunit.xml", "phpunit.xml.dist"],
-        "Pest": ["pest.php", "pest.xml"],
-        "Cargo test": ["Cargo.toml"],
-        "Go test": ["go.mod"],
-        "RSpec": [".rspec"],
-    }
-
-    detected_tests = []
-    for framework, markers in test_markers.items():
-        for marker in markers:
-            f = path / marker
-            if f.is_file():
-                detected_tests.append(framework)
-                break
-            if marker == "pom.xml":
-                content = _safe_read(path / "pom.xml")
-                if content and "junit" in content.lower():
-                    if "junit5" in content.lower() or "jupiter" in content.lower():
-                        if "JUnit 5" not in detected_tests:
-                            detected_tests.append("JUnit 5")
-                    elif "JUnit" not in detected_tests:
-                        detected_tests.append("JUnit")
-            if marker == "build.gradle" or marker == "build.gradle.kts":
-                content = _safe_read(path / marker)
-                if content and "junit" in content.lower():
-                    detected_tests.append(framework)
-
-    # ── pytest: positive evidence only (issue: pyproject alone is NOT proof) ──
-    pdata = _load_toml(_read_maybe_rooted(path / "pyproject.toml", path))
-    if pdata:
-        try:
-            has_cfg = isinstance(pdata.get("tool", {}).get("pytest"), dict)
-            deps_list: list[str] = []
-            proj_tbl = pdata.get("project", {}) or {}
-            deps_list.extend(_flat_deps(proj_tbl.get("dependencies", [])))
-            for grp in (proj_tbl.get("optional-dependencies") or {}).values():
-                deps_list.extend(_flat_deps(grp))
-            for grp in (pdata.get("dependency-groups") or {}).values():
-                deps_list.extend(_flat_deps(grp))
-            # Poetry declares dev/test groups separately (poetry.group.*.dependencies).
-            _poetry = ((pdata.get("tool") or {}).get("poetry") or {})
-            for _grp_tbl in (_poetry.get("group") or {}).values():
-                if isinstance(_grp_tbl, dict):
-                    deps_list.extend(_flat_deps(_grp_tbl.get("dependencies", {})))
-            has_dep = any(d.lower().startswith("pytest") for d in deps_list)
-            if (has_cfg or has_dep) and "pytest" not in detected_tests:
-                detected_tests.append("pytest")
-        except Exception:
-            pass
-
-    # ── Test frameworks from package.json dependencies ──
-    # Reading actual dependencies is more reliable than hunting config files.
-    pkg = path / "package.json"
-    if pkg.is_file():
-        content = _safe_read(pkg)
-        if content:
-            try:
-                data = json.loads(content)
-                deps = {**data.get("dependencies", {}),
-                        **data.get("devDependencies", {})}
-                pkg_test_map = {
-                    "jest": "Jest", "vitest": "Vitest", "mocha": "Mocha",
-                    "playwright": "Playwright", "@playwright/test": "Playwright",
-                    "cypress": "Cypress", "ava": "Ava", "tap": "tap",
-                }
-                for dep, tname in pkg_test_map.items():
-                    if dep in deps and tname not in detected_tests:
-                        detected_tests.append(tname)
-            except json.JSONDecodeError:
-                pass
-
+    detected_tests = _detect_test_frameworks(path)
     conv["test_frameworks"] = list(set(detected_tests))
 
     # ── Linting / Formatting ──
@@ -123,8 +47,124 @@ def detect_conventions(path: Path) -> dict[str, Any]:
     conv["quality_tools"] = [f for f in lint_files if (path / f).is_file()]
 
     # ── Detected settings — never invent rules, only report observed ones ──
-    line_length = None
-    line_length_source = None
+    line_length = _detect_line_length(path)
+    if line_length is not None:
+        conv["line_length"], conv["line_length_source"] = line_length
+
+    # Formatter: only when a config actually declares it.
+    formatter = _detect_python_formatter(path, conv.get("quality_tools", []))
+    if formatter:
+        conv["python_formatter"] = formatter
+
+    # ── CI/CD ──
+    conv["ci_cd"] = _detect_ci_cd(path)
+
+    # ── Docker ──
+    conv["docker"] = _detect_docker(path)
+
+    # ── Commit convention ──
+    commit_convention = _detect_commit_convention(path)
+    if commit_convention:
+        conv["commit_convention"] = commit_convention
+
+    # ── Editor ──
+    editor = _detect_editor(path)
+    if editor:
+        conv["editor"] = editor
+
+    # ── Monorepo detection ──
+    conv["is_monorepo"] = _is_monorepo(path)
+
+    # ── Test files on disk (evidence, not just config markers) ──
+    conv["test_file_count"] = _count_test_files(path)
+
+    return conv
+
+
+def _detect_test_frameworks(path: Path) -> list[str]:
+    """Detect test frameworks from config markers and real dependencies."""
+    test_markers: dict[str, list[str]] = {
+        "pytest": ["pytest.ini", "conftest.py"],
+        "JUnit 5": ["pom.xml", "build.gradle"],
+        "Jest": ["jest.config.js", "jest.config.ts", "jest.config.mjs"],
+        "Vitest": ["vitest.config.ts", "vitest.config.js"],
+        "Mocha": [".mocharc.js", ".mocharc.yml"],
+        "PHPUnit": ["phpunit.xml", "phpunit.xml.dist"],
+        "Pest": ["pest.php", "pest.xml"],
+        "Cargo test": ["Cargo.toml"],
+        "Go test": ["go.mod"],
+        "RSpec": [".rspec"],
+    }
+
+    detected: list[str] = []
+    for framework, markers in test_markers.items():
+        for marker in markers:
+            f = path / marker
+            if f.is_file():
+                detected.append(framework)
+                break
+            if marker == "pom.xml":
+                content = _safe_read(path / "pom.xml")
+                if content and "junit" in content.lower():
+                    if "junit5" in content.lower() or "jupiter" in content.lower():
+                        if "JUnit 5" not in detected:
+                            detected.append("JUnit 5")
+                    elif "JUnit" not in detected:
+                        detected.append("JUnit")
+            if marker == "build.gradle" or marker == "build.gradle.kts":
+                content = _safe_read(path / marker)
+                if content and "junit" in content.lower():
+                    detected.append(framework)
+
+    # ── pytest: positive evidence only (issue: pyproject alone is NOT proof) ──
+    pdata = _load_toml(_read_maybe_rooted(path / "pyproject.toml", path))
+    if pdata:
+        try:
+            has_cfg = isinstance(pdata.get("tool", {}).get("pytest"), dict)
+            deps_list: list[str] = []
+            proj_tbl = pdata.get("project", {}) or {}
+            deps_list.extend(_flat_deps(proj_tbl.get("dependencies", [])))
+            for grp in (proj_tbl.get("optional-dependencies") or {}).values():
+                deps_list.extend(_flat_deps(grp))
+            for grp in (pdata.get("dependency-groups") or {}).values():
+                deps_list.extend(_flat_deps(grp))
+            # Poetry declares dev/test groups separately (poetry.group.*.dependencies).
+            _poetry = ((pdata.get("tool") or {}).get("poetry") or {})
+            for _grp_tbl in (_poetry.get("group") or {}).values():
+                if isinstance(_grp_tbl, dict):
+                    deps_list.extend(_flat_deps(_grp_tbl.get("dependencies", {})))
+            has_dep = any(d.lower().startswith("pytest") for d in deps_list)
+            if (has_cfg or has_dep) and "pytest" not in detected:
+                detected.append("pytest")
+        except Exception:
+            pass
+
+    # ── Test frameworks from package.json dependencies ──
+    # Reading actual dependencies is more reliable than hunting config files.
+    pkg = path / "package.json"
+    if pkg.is_file():
+        content = _safe_read(pkg)
+        if content:
+            try:
+                data = json.loads(content)
+                deps = {**data.get("dependencies", {}),
+                        **data.get("devDependencies", {})}
+                pkg_test_map = {
+                    "jest": "Jest", "vitest": "Vitest", "mocha": "Mocha",
+                    "playwright": "Playwright", "@playwright/test": "Playwright",
+                    "cypress": "Cypress", "ava": "Ava", "tap": "tap",
+                }
+                for dep, tname in pkg_test_map.items():
+                    if dep in deps and tname not in detected:
+                        detected.append(tname)
+            except json.JSONDecodeError:
+                pass
+
+    return detected
+
+
+def _detect_line_length(path: Path) -> tuple[int, str] | None:
+    """Detect the configured max line length (observed only, never invented)."""
     for toml_name in ("ruff.toml", ".ruff.toml", "pyproject.toml"):
         toml_path = path / toml_name
         if not toml_path.is_file():
@@ -145,38 +185,34 @@ def detect_conventions(path: Path) -> dict[str, Any]:
             ]
             for tbl, src in candidates:
                 if isinstance(tbl, dict) and isinstance(tbl.get("line-length"), int):
-                    line_length = tbl["line-length"]
-                    line_length_source = src
-                    break
-            if line_length is not None:
-                break
+                    return tbl["line-length"], src
         except Exception:
             continue
-    if line_length is None and (path / ".editorconfig").is_file():
+    if (path / ".editorconfig").is_file():
         ec = _safe_read(path / ".editorconfig") or ""
         m = re.search(r"max_line_length\s*=\s*(\d+)", ec)
         if m:
-            line_length = int(m.group(1))
-            line_length_source = "from .editorconfig"
-    if line_length is not None:
-        conv["line_length"] = line_length
-        conv["line_length_source"] = line_length_source
+            return int(m.group(1)), "from .editorconfig"
+    return None
 
-    # Formatter: only when a config actually declares it.
+
+def _detect_python_formatter(path: Path, quality_tools: list[str]) -> str | None:
+    """Detect the Python formatter only when a config actually declares it."""
     try:
         if (path / "pyproject.toml").is_file():
             _pd = _load_toml(_read_maybe_rooted(path / "pyproject.toml", path)) or {}
             if isinstance((_pd.get("tool") or {}).get("black"), dict):
-                conv["python_formatter"] = "Black"
-        if "python_formatter" not in conv and (
-            (path / "ruff.toml").is_file() or (path / ".ruff.toml").is_file()
-            or "ruff.toml" in conv.get("quality_tools", [])
-        ):
-            conv["python_formatter"] = "Ruff"
+                return "Black"
+        if (path / "ruff.toml").is_file() or (path / ".ruff.toml").is_file() \
+                or "ruff.toml" in quality_tools:
+            return "Ruff"
     except Exception:
         pass
+    return None
 
-    # ── CI/CD ──
+
+def _detect_ci_cd(path: Path) -> list[str]:
+    """Return the CI systems whose marker files/dirs exist."""
     ci_markers = [
         (".github/workflows", "GitHub Actions"),
         (".gitlab-ci.yml", "GitLab CI"),
@@ -186,9 +222,11 @@ def detect_conventions(path: Path) -> dict[str, Any]:
         (".woodpecker.yml", "Woodpecker"),
         (".buildkite/pipeline.yml", "Buildkite"),
     ]
-    conv["ci_cd"] = [name for dirname, name in ci_markers if (path / dirname).exists()]
+    return [name for dirname, name in ci_markers if (path / dirname).exists()]
 
-    # ── Docker ──
+
+def _detect_docker(path: Path) -> dict[str, bool]:
+    """Return which Docker artefacts exist (Dockerfile, compose, ignore)."""
     docker: dict[str, bool] = {}
     for f in path.iterdir():
         if f.name == "Dockerfile" or f.name.startswith("Dockerfile."):
@@ -197,16 +235,18 @@ def detect_conventions(path: Path) -> dict[str, Any]:
             docker["has_compose"] = True
     if (path / ".dockerignore").is_file():
         docker["has_dockerignore"] = True
-    conv["docker"] = docker
+    return docker
 
-    # ── Commit convention ──
+
+def _detect_commit_convention(path: Path) -> str | None:
+    """Return the commit convention when there is evidence, else None."""
     if (path / ".commitlintrc.json").is_file() or (path / "commitlint.config.js").is_file():
-        conv["commit_convention"] = "conventional-commits"
-    elif (path / "cliff.toml").is_file():
-        conv["commit_convention"] = "conventional-commits (git-cliff)"
-    elif (path / ".github/semantic.yml").is_file():
-        conv["commit_convention"] = "semantic-prs"
-    elif (path / ".git").exists():
+        return "conventional-commits"
+    if (path / "cliff.toml").is_file():
+        return "conventional-commits (git-cliff)"
+    if (path / ".github/semantic.yml").is_file():
+        return "semantic-prs"
+    if (path / ".git").exists():
         # Observe the history instead of guessing (evidence, not invention).
         try:
             proc = subprocess.run(
@@ -222,25 +262,22 @@ def detect_conventions(path: Path) -> dict[str, Any]:
                 )
                 hits = sum(1 for ln in sample if conv_re.search(ln))
                 if sample and hits / len(sample) >= 0.6:
-                    conv["commit_convention"] = "conventional-commits (observed in git log)"
+                    return "conventional-commits (observed in git log)"
         except Exception:
             pass
+    return None
 
-    # ── Editor ──
+
+def _detect_editor(path: Path) -> str | None:
+    """Return the detected editor folder, last match wins (vscode < idea < cursor)."""
+    editor = None
     if (path / ".vscode").is_dir():
-        conv["editor"] = "vscode"
+        editor = "vscode"
     if (path / ".idea").is_dir():
-        conv["editor"] = "intellij"
+        editor = "intellij"
     if (path / ".cursor").is_dir():
-        conv["editor"] = "cursor"
-
-    # ── Monorepo detection ──
-    conv["is_monorepo"] = _is_monorepo(path)
-
-    # ── Test files on disk (evidence, not just config markers) ──
-    conv["test_file_count"] = _count_test_files(path)
-
-    return conv
+        editor = "cursor"
+    return editor
 
 
 def _is_monorepo(path: Path) -> bool:
