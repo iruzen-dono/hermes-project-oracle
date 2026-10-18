@@ -436,6 +436,9 @@ class TestPythonProjectRegressions(unittest.TestCase):
     def test_issue5_auto_summary_without_interview(self):
         report_path, report = self._scan()
         self.assertTrue(report.get("summary"), "report.summary must be filled")
+        # Attribution: this fixture has a pyproject description — it wins.
+        self.assertEqual(report.get("summary_source"), "manifest (pyproject.toml)",
+                         f"unexpected summary source: {report.get('summary_source')}")
         out = self.proj / "AGENTS.md"
         r = _run(GENERATE, "--scan", str(report_path), "--template", "agents-md",
                  "--output", str(out))
@@ -443,6 +446,37 @@ class TestPythonProjectRegressions(unittest.TestCase):
         md = out.read_text(encoding="utf-8")
         self.assertIn("Project summary", md)
         self.assertIn("acme widgets", md)
+
+    def test_issue5_summary_source_readme_then_docstring(self):
+        # No manifest description and no useful README → first real README paragraph.
+        bare = self.root / "readme-proj"
+        bare.mkdir()
+        (bare / "pyproject.toml").write_text(
+            '[project]\nname = "bare"\n', encoding="utf-8"
+        )
+        (bare / "README.md").write_text(
+            "# bare\n\nA tiny reader that parses CSV files into dictionaries.\n",
+            encoding="utf-8",
+        )
+        r = _run(SCAN, "--path", str(bare), "--output", "-")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        report = json.loads(r.stdout)
+        self.assertIn("CSV", report.get("summary", ""))
+        self.assertEqual(report.get("summary_source"), "README")
+
+        # No README at all, no description → module docstring of the entry point.
+        silent = self.root / "silent-proj"
+        silent.mkdir()
+        (silent / "main.py").write_text(
+            '"""Orchestrates the nightly billing export for finance."""\n\n'
+            "def main():\n    pass\n",
+            encoding="utf-8",
+        )
+        r = _run(SCAN, "--path", str(silent), "--output", "-")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        report = json.loads(r.stdout)
+        self.assertIn("billing export", report.get("summary", ""))
+        self.assertEqual(report.get("summary_source"), "docstring (main.py)")
 
 
     # ── Issue #6: no self-scan, no absolute paths, VCS stays clean ──

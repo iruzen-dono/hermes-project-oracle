@@ -288,6 +288,9 @@ def _detect_node(package_json: Path | None) -> dict[str, Any]:
     if not isinstance(all_deps, dict):
         all_deps = {}
     result["deps_sample"] = list(all_deps.keys())[:50]
+    # One-line project purpose (issue #5): package.json description field.
+    if isinstance(data.get("description"), str) and data["description"].strip():
+        result["description"] = data["description"].strip()[:300]
 
     # Framework detection — collect ALL matches, not just the first.
     frameworks = [display for pkg, display in _NODE_FRAMEWORKS if pkg in all_deps]
@@ -533,6 +536,10 @@ def detect_entry_points(path: Path) -> list[dict[str, str]]:
         "wsgi.py": "wsgi_entry",
         "asgi.py": "asgi_entry",
         "manage.py": "django_entry",
+        "launcher.py": "bootstrap_entry",
+        "start.py": "bootstrap_entry",
+        "mcp_server.py": "mcp_entry",
+        "__main__.py": "module_entry",
         "artisan": "laravel_cli",
         "Program.cs": "dotnet_entry",
         "main.rs": "rust_entry",
@@ -1140,6 +1147,34 @@ def _detect_misc(path: Path) -> dict[str, Any]:
     return misc
 
 
+def _module_docstring(path: Path) -> str | None:
+    """First docstring of a Python file, flattened to one line (issue #5)."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, ValueError):
+        return None
+    doc = ast.get_docstring(tree)
+    if doc:
+        text = " ".join(doc.split())[:300]
+        if len(text) > 40:
+            return text
+    return None
+
+
+def _entry_docstring(path: Path) -> tuple[str | None, str | None]:
+    """Best one-liner from a canonical entry point, then any root script."""
+    canonical = ("server.py", "main.py", "app.py", "cli.py", "run.py",
+                 "__main__.py", "bootstrap.py", "manage.py", "wsgi.py", "asgi.py")
+    ordered = [path / n for n in canonical if (path / n).is_file()]
+    ordered += [p for p in sorted(path.glob("*.py"))
+                if p.name.startswith("_") is False and p not in ordered]
+    for py in ordered:
+        doc = _module_docstring(py)
+        if doc:
+            return doc, py.name
+    return None, None
+
+
 # ── Main ────────────────────────────────────────────────────────────────────
 
 
@@ -1233,16 +1268,28 @@ def main() -> None:
                     and not any(s in _.parts for s in _SKIP_DIRS))
 
     # ── Assemble ──
-    # Heuristic project summary (issue #5): manifest description first,
-    # first README paragraph second — the interview remains optional.
+    # Heuristic project summary (issue #5), in priority order:
+    #   1. manifest description (package.json / pyproject.toml [project])
+    #   2. first README paragraph
+    #   3. module docstring of the main entry point (server.py, main.py, …)
+    # The interview stays optional; `summary_source` records where it came from.
     summary = None
+    summary_source = None
     for bs in build_systems:
         parsed = bs.get("parsed", {})
         if isinstance(parsed, dict) and parsed.get("description"):
             summary = parsed["description"]
+            summary_source = f"manifest ({bs.get('file', 'unknown')})"
             break
     if not summary:
         summary = misc.get("readme_summary")
+        if summary:
+            summary_source = "README"
+    if not summary:
+        doc, doc_file = _entry_docstring(root)
+        if doc:
+            summary = doc
+            summary_source = f"docstring ({doc_file})"
 
     report = {
         "tool": "project-oracle",
@@ -1251,6 +1298,7 @@ def main() -> None:
         "project_name": root.name,
         # NOTE: no absolute path here — the report must be shareable.
         "summary": summary,
+        "summary_source": summary_source,
         "file_count": file_count,
         "dir_count": dir_count,
         "languages": languages,
