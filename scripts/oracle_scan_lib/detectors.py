@@ -129,6 +129,8 @@ def _detect_python(pyproject: Path | None, root: Path | None = None) -> dict[str
 def _detect_node(package_json: Path | None, root: Path | None = None) -> dict[str, Any]:
     """Analyse un projet Node.js via package.json (frameworks multiples, scripts complets)."""
     result: dict[str, Any] = {"present": True}
+    if package_json is None:
+        return result
     content = _read_maybe_rooted(package_json, root)
     if not content:
         return result
@@ -313,7 +315,7 @@ def _detect_php(composer: Path | None, root: Path | None = None) -> dict[str, An
     return result
 
 
-def detect_build_system(path: Path) -> list[dict[str, str]]:
+def detect_build_system(path: Path) -> list[dict[str, Any]]:
     """Détecte les systèmes de build et fichiers de config."""
     config_scanners = [
         ("pyproject.toml", "Python/pyproject", _detect_python),
@@ -336,7 +338,7 @@ def detect_build_system(path: Path) -> list[dict[str, str]]:
         ("pubspec.yaml", "Dart/Flutter", None),
     ]
 
-    results = []
+    results: list[dict[str, Any]] = []
     for name, label, scanner in config_scanners:
         if "*" in name:
             # Glob pattern
@@ -346,7 +348,7 @@ def detect_build_system(path: Path) -> list[dict[str, str]]:
                 continue
         f = path / name
         if f.is_file():
-            entry = {"file": f.name, "label": label}
+            entry: dict[str, Any] = {"file": f.name, "label": label}
             if scanner:
                 parsed = scanner(f, path)  # pass project root for symlink guard
                 entry["parsed"] = parsed

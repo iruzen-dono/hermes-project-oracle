@@ -23,6 +23,7 @@ import logging
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 try:
     from version import __version__
@@ -36,13 +37,15 @@ except ImportError:  # standalone copy — minimal atomic fallback (temp + repla
     import os
     import tempfile
 
-    def atomic_write(target: Path, content: str, root: Path | None = None) -> None:
+    def atomic_write(target: Path, content: str,
+                     must_stay_under_root: Path | None = None) -> None:
         """Fallback atomic write (see safe_io.atomic_write for the full contract)."""
         target = Path(target)
         if target.is_symlink():
             raise ValueError(
                 f"refusing to write through an existing symlink: {target}")
-        if root is not None and not target.resolve().is_relative_to(root.resolve()):
+        if (must_stay_under_root is not None
+                and not target.resolve().is_relative_to(must_stay_under_root.resolve())):
             raise ValueError(f"refusing to write outside the root: {target}")
         target.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=str(target.parent),
@@ -216,7 +219,7 @@ def main() -> None:
     summary = None
     summary_source = None
     for bs in build_systems:
-        parsed = bs.get("parsed", {})
+        parsed: Any = bs.get("parsed", {})
         if isinstance(parsed, dict) and parsed.get("description"):
             summary = parsed["description"]
             summary_source = f"manifest ({bs.get('file', 'unknown')})"

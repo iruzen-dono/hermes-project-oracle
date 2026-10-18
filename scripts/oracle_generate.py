@@ -20,6 +20,7 @@ import contextlib
 import json
 import logging
 import sys
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -75,7 +76,8 @@ def _t(text: str | None, default: str = "not specified") -> str:
     return text if text else default
 
 
-def _bullet(items: list[Any], formatter: callable = str, max_items: int = 10) -> list[str]:
+def _bullet(items: list[Any], formatter: Callable[[Any], str] = str,
+            max_items: int = 10) -> list[str]:
     """Format a list as bullet points."""
     out = [f"- {formatter(item)}" for item in items[:max_items]]
     if len(items) > max_items:
@@ -230,7 +232,7 @@ def render_agents_md(report: dict[str, Any]) -> str:
         lines.append("### Nested packages (monorepo)")
         for bs in nested_bs[:10]:
             parsed = bs.get("parsed", {})
-            fws = []
+            fws: list[str] = []
             if isinstance(parsed, dict):
                 fws = parsed.get("frameworks") or (
                     [parsed["framework"]] if parsed.get("framework") else []
@@ -574,7 +576,7 @@ def render_obsidian(report: dict[str, Any]) -> str:
 
 # ── Template Registry ───────────────────────────────────────────────────────
 
-TEMPLATES: dict[str, tuple[str, callable]] = {
+TEMPLATES: dict[str, tuple[str, Callable[[dict[str, Any]], str]]] = {
     "agents-md": ("AGENTS.md", render_agents_md),
     "claude-md": ("CLAUDE.md", render_claude_md),
     "obsidian": ("project.md", render_obsidian),
