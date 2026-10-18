@@ -87,18 +87,18 @@ def _bullet(items: list[Any], formatter: Callable[[Any], str] = str,
 
 
 def _sanitize_untrusted(text: Any) -> str:
-    """Neutralise du texte lu dans le projet scanné avant recopie.
+    """Neutralize text read from the scanned project before it is copied back.
 
-    Le texte d'un dépôt inconnu (README, manifeste, docstring, interview)
-    est réinjecté comme des *consignes* dans AGENTS.md — c'est un vecteur
-    d'injection. On aplatit tout sur une ligne (impossible d'insérer un
-    titre `##`), on neutralise les marqueurs de mise à jour `<!-- oracle:… -->`
-    (sinon la prochaine régénération corrompt le fichier) et on échappe les
-    caractères Markdown restants pour que le texte reste du texte.
+    Text from an unknown repo (README, manifest, docstring, interview) is
+    re-injected as *instructions* into AGENTS.md — it is an injection vector.
+    Everything is flattened onto a single line (inserting a `##` title becomes
+    impossible), update markers `<!-- oracle:… -->` are neutralized (otherwise
+    the next regeneration would corrupt the file) and the remaining Markdown
+    characters are escaped so text stays text.
     """
-    # Strip C0 (0x00-0x1F) et C1 (0x80-0x9F) control chars, plus U+2028/2029
+    # Strip C0 (0x00-0x1F) and C1 (0x80-0x9F) control chars, plus U+2028/2029
     # (line/paragraph separators that break files without being visible).
-    # \t/\n/\r are kept here and collapsed to spaces by the split below;
+    # \t/\n/\r survive here and are collapsed to spaces by the split below;
     # everything else that is a control char (NUL, ESC, DEL, C1, …) is dropped.
     def _keep(ch: str) -> bool:
         o = ord(ch)

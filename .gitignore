@@ -10,3 +10,8 @@ Thumbs.db
 .ruff_cache/
 *.zip 
 .venv/ 
+# Tooling run artifacts — never commit
+.coverage
+.coverage.*
+.mypy_cache/
+.pytest_cache/

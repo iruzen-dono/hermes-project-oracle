@@ -1,0 +1,9 @@
+[run]
+source = scripts
+omit =
+    scripts/version.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
