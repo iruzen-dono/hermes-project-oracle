@@ -17,6 +17,36 @@ import re
 import sys
 from pathlib import Path
 
+try:
+    from safe_io import atomic_write
+except ImportError:  # standalone copy — minimal atomic fallback (temp + replace)
+    import os
+    import tempfile
+
+    def atomic_write(target: Path, content: str,
+                     must_stay_under_root: Path | None = None) -> None:
+        """Fallback atomic write (see safe_io.atomic_write for the full contract)."""
+        target = Path(target)
+        if target.is_symlink():
+            raise ValueError(
+                f"refusing to write through an existing symlink: {target}")
+        if must_stay_under_root is not None:
+            if not target.resolve().is_relative_to(must_stay_under_root.resolve()):
+                raise ValueError(f"refusing to write outside the root: {target}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=str(target.parent),
+                                   prefix=f".{target.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+                fh.write(content)
+            os.replace(tmp, str(target))
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
 # Characters that must never appear in a single path component.
 _UNSAFE_CHARS = re.compile(r'[/\\<>:"|?*\x00]')
 
@@ -75,8 +105,9 @@ def push_to_vault(vault: Path, project_name: str, content: str,
                 f"(a .bak copy will be kept)"
             )
         backup = note_path.with_suffix(".md.bak")
-        backup.write_text(note_path.read_text(encoding="utf-8"), encoding="utf-8")
-    note_path.write_text(content, encoding="utf-8")
+        atomic_write(backup, note_path.read_text(encoding="utf-8"),
+                     must_stay_under_root=vault_root)
+    atomic_write(note_path, content, must_stay_under_root=vault_root)
     return note_path
 
 

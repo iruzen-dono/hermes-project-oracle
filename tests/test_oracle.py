@@ -630,6 +630,9 @@ class TestInjectionHardening(unittest.TestCase):
 class TestSymlinkEscape(unittest.TestCase):
     """A README symlink pointing outside the repo must not leak its content."""
 
+    def setUp(self):
+        sys.path.insert(0, str(SCRIPTS))
+
     def test_external_symlink_readme_is_ignored(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "proj"
@@ -645,6 +648,33 @@ class TestSymlinkEscape(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertNotIn("sk-1234567890abcdef", r.stdout,
                              "external symlink leaked into the report")
+
+    def test_report_write_refuses_symlink_escaping_root(self):
+        """scan-report.json must not be written through a symlink out of root."""
+        from safe_io import atomic_write
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "proj"
+            root.mkdir()
+            (root / "main.py").write_text("x = 1\n", encoding="utf-8")
+            outside = Path(td) / "outside.txt"
+            outside.write_text("original\n", encoding="utf-8")
+            target = root / "report.json"
+            try:
+                target.symlink_to(outside)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks not supported on this platform")
+            with self.assertRaises(ValueError):
+                atomic_write(target, '{"x": 1}')
+            self.assertEqual(outside.read_text(encoding="utf-8"), "original\n",
+                             "write through symlink corrupted a file outside "
+                             "the root")
+            # must_stay_under_root additionally pins the resolved path.
+            with self.assertRaises(ValueError):
+                atomic_write(target, '{"x": 2}', must_stay_under_root=root)
+            self.assertEqual(outside.read_text(encoding="utf-8"), "original\n",
+                             "write through escaping symlink corrupted a file "
+                             "outside the root")
 
 
 class TestSummaryHeuristics(unittest.TestCase):

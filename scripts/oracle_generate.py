@@ -28,6 +28,36 @@ try:
 except ImportError:  # scripts/ not on sys.path — visible, not silently wrong
     __version__ = "unknown"
 
+try:
+    from safe_io import atomic_write
+except ImportError:  # standalone copy — minimal atomic fallback (temp + replace)
+    import os
+    import tempfile
+
+    def atomic_write(target: Path, content: str,
+                     must_stay_under_root: Path | None = None) -> None:
+        """Fallback atomic write (see safe_io.atomic_write for the full contract)."""
+        target = Path(target)
+        if target.is_symlink():
+            raise ValueError(
+                f"refusing to write through an existing symlink: {target}")
+        if must_stay_under_root is not None:
+            if not target.resolve().is_relative_to(must_stay_under_root.resolve()):
+                raise ValueError(f"refusing to write outside the root: {target}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=str(target.parent),
+                                   prefix=f".{target.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+                fh.write(content)
+            os.replace(tmp, str(target))
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
 # ── Logging ─────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
@@ -580,7 +610,7 @@ def write_output(out_path: Path, content: str, force: bool) -> str:
     """
     if not out_path.exists():
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(_wrap_markers(content), encoding="utf-8")
+        atomic_write(out_path, _wrap_markers(content))
         return "created"
 
     existing = out_path.read_text(encoding="utf-8")
@@ -594,7 +624,7 @@ def write_output(out_path: Path, content: str, force: bool) -> str:
             + "\n"
             + existing[end:]
         )
-        out_path.write_text(merged, encoding="utf-8")
+        atomic_write(out_path, merged)
         log.info("Updated marked section in %s — text outside markers preserved",
                  out_path)
         return "merged"
@@ -611,8 +641,8 @@ def write_output(out_path: Path, content: str, force: bool) -> str:
         sys.exit(2)
 
     backup = out_path.with_name(out_path.name + ".bak")
-    backup.write_text(existing, encoding="utf-8")
-    out_path.write_text(_wrap_markers(content), encoding="utf-8")
+    atomic_write(backup, existing)
+    atomic_write(out_path, _wrap_markers(content))
     log.warning("Overwrote %s — previous content saved to %s", out_path, backup)
     return "overwritten"
 

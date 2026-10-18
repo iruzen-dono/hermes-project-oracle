@@ -34,6 +34,36 @@ try:
 except ImportError:  # scripts/ not on sys.path — visible, not silently wrong
     __version__ = "unknown"
 
+try:
+    from safe_io import atomic_write
+except ImportError:  # standalone copy — minimal atomic fallback (temp + replace)
+    import os
+    import tempfile
+
+    def atomic_write(target: Path, content: str,
+                     must_stay_under_root: Path | None = None) -> None:
+        """Fallback atomic write (see safe_io.atomic_write for the full contract)."""
+        target = Path(target)
+        if target.is_symlink():
+            raise ValueError(
+                f"refusing to write through an existing symlink: {target}")
+        if must_stay_under_root is not None:
+            if not target.resolve().is_relative_to(must_stay_under_root.resolve()):
+                raise ValueError(f"refusing to write outside the root: {target}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=str(target.parent),
+                                   prefix=f".{target.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+                fh.write(content)
+            os.replace(tmp, str(target))
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
 # ── Logging ─────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
@@ -1411,9 +1441,9 @@ def main() -> None:
         if looks_like_dir:
             output_path = output_path / "scan-report.json"
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(
+        atomic_write(
+            output_path,
             json.dumps(report, indent=2, ensure_ascii=False),
-            encoding="utf-8",
         )
         log.info("Report written: %s (%d bytes)", output_path, output_path.stat().st_size)
 
@@ -1428,8 +1458,9 @@ def main() -> None:
                     if not any(line.strip() in (".oracle", ".oracle/", "/.oracle/")
                                for line in gi.splitlines()):
                         sep = "" if gi.endswith("\n") or not gi else "\n"
-                        gitignore.write_text(
-                            gi + sep + ".oracle/\n", encoding="utf-8"
+                        atomic_write(
+                            gitignore,
+                            gi + sep + ".oracle/\n",
                         )
                         log.info("Added .oracle/ to %s", gitignore)
         except OSError as exc:
