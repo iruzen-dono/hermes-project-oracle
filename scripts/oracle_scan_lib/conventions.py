@@ -5,6 +5,7 @@ Functions moved verbatim out of oracle_scan.py — behaviour is unchanged.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import subprocess
@@ -81,11 +82,76 @@ def detect_conventions(path: Path) -> dict[str, Any]:
     return conv
 
 
+def _detect_pytest(path: Path) -> bool:
+    """True when pytest is evidenced by config or a real dependency (never bare pyproject)."""
+    pdata = _load_toml(_read_maybe_rooted(path / "pyproject.toml", path))
+    if not pdata:
+        return False
+    try:
+        has_cfg = isinstance(pdata.get("tool", {}).get("pytest"), dict)
+        deps_list: list[str] = []
+        proj_tbl = pdata.get("project", {}) or {}
+        deps_list.extend(_flat_deps(proj_tbl.get("dependencies", [])))
+        for grp in (proj_tbl.get("optional-dependencies") or {}).values():
+            deps_list.extend(_flat_deps(grp))
+        for grp in (pdata.get("dependency-groups") or {}).values():
+            deps_list.extend(_flat_deps(grp))
+        # Poetry declares dev/test groups separately (poetry.group.*.dependencies).
+        _poetry = ((pdata.get("tool") or {}).get("poetry") or {})
+        for _grp_tbl in (_poetry.get("group") or {}).values():
+            if isinstance(_grp_tbl, dict):
+                deps_list.extend(_flat_deps(_grp_tbl.get("dependencies", {})))
+        has_dep = any(d.lower().startswith("pytest") for d in deps_list)
+        return bool(has_cfg or has_dep)
+    except Exception:  # noqa: BLE001 — malformed manifest must not crash the scan
+        return False
+
+
+def _detect_node_test_deps(path: Path) -> list[str]:
+    """Test frameworks named in package.json (dependencies + devDependencies)."""
+    found: list[str] = []
+    manifests = [path / "package.json"]
+    with contextlib.suppress(OSError):
+        manifests.extend(
+            child / "package.json"
+            for child in path.iterdir()
+            if child.is_dir() and not child.name.startswith(".")
+            and child.name not in _SKIP_DIRS
+        )
+    pkg_test_map = {
+        "jest": "Jest", "vitest": "Vitest", "mocha": "Mocha",
+        "playwright": "Playwright", "@playwright/test": "Playwright",
+        "cypress": "Cypress", "ava": "Ava", "tap": "tap",
+    }
+    for pkg in manifests:
+        if not pkg.is_file():
+            continue
+        content = _safe_read(pkg)
+        if not content:
+            continue
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+        deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
+        for dep, tname in pkg_test_map.items():
+            if dep in deps and tname not in found:
+                found.append(tname)
+        # Built-in runner needs no dependency (audit #2): any npm script
+        # invoking `node --test` is evidence of a suite.
+        scripts = data.get("scripts", {})
+        if isinstance(scripts, dict) and "node --test" not in found:
+            for _cmd in scripts.values():
+                if re.search(r"(^|[\s&|;])node\s+--test\b", str(_cmd)):
+                    found.append("node --test")
+                    break
+    return found
+
+
 def _detect_test_frameworks(path: Path) -> list[str]:
     """Detect test frameworks from config markers and real dependencies."""
     test_markers: dict[str, list[str]] = {
         "pytest": ["pytest.ini", "conftest.py"],
-        "JUnit 5": ["pom.xml", "build.gradle"],
         "Jest": ["jest.config.js", "jest.config.ts", "jest.config.mjs"],
         "Vitest": ["vitest.config.ts", "vitest.config.js"],
         "Mocha": [".mocharc.js", ".mocharc.yml"],
@@ -98,69 +164,46 @@ def _detect_test_frameworks(path: Path) -> list[str]:
 
     detected: list[str] = []
     for framework, markers in test_markers.items():
-        for marker in markers:
-            f = path / marker
-            if f.is_file():
-                detected.append(framework)
-                break
-            if marker == "pom.xml":
-                content = _safe_read(path / "pom.xml")
-                if content and "junit" in content.lower():
-                    if "junit5" in content.lower() or "jupiter" in content.lower():
-                        if "JUnit 5" not in detected:
-                            detected.append("JUnit 5")
-                    elif "JUnit" not in detected:
-                        detected.append("JUnit")
-            if marker == "build.gradle" or marker == "build.gradle.kts":
-                content = _safe_read(path / marker)
-                if content and "junit" in content.lower():
-                    detected.append(framework)
-
-    # ── pytest: positive evidence only (issue: pyproject alone is NOT proof) ──
-    pdata = _load_toml(_read_maybe_rooted(path / "pyproject.toml", path))
-    if pdata:
-        try:
-            has_cfg = isinstance(pdata.get("tool", {}).get("pytest"), dict)
-            deps_list: list[str] = []
-            proj_tbl = pdata.get("project", {}) or {}
-            deps_list.extend(_flat_deps(proj_tbl.get("dependencies", [])))
-            for grp in (proj_tbl.get("optional-dependencies") or {}).values():
-                deps_list.extend(_flat_deps(grp))
-            for grp in (pdata.get("dependency-groups") or {}).values():
-                deps_list.extend(_flat_deps(grp))
-            # Poetry declares dev/test groups separately (poetry.group.*.dependencies).
-            _poetry = ((pdata.get("tool") or {}).get("poetry") or {})
-            for _grp_tbl in (_poetry.get("group") or {}).values():
-                if isinstance(_grp_tbl, dict):
-                    deps_list.extend(_flat_deps(_grp_tbl.get("dependencies", {})))
-            has_dep = any(d.lower().startswith("pytest") for d in deps_list)
-            if (has_cfg or has_dep) and "pytest" not in detected:
-                detected.append("pytest")
-        except Exception:
-            pass
-
-    # ── Test frameworks from package.json dependencies ──
-    # Reading actual dependencies is more reliable than hunting config files.
-    pkg = path / "package.json"
-    if pkg.is_file():
-        content = _safe_read(pkg)
-        if content:
-            try:
-                data = json.loads(content)
-                deps = {**data.get("dependencies", {}),
-                        **data.get("devDependencies", {})}
-                pkg_test_map = {
-                    "jest": "Jest", "vitest": "Vitest", "mocha": "Mocha",
-                    "playwright": "Playwright", "@playwright/test": "Playwright",
-                    "cypress": "Cypress", "ava": "Ava", "tap": "tap",
-                }
-                for dep, tname in pkg_test_map.items():
-                    if dep in deps and tname not in detected:
-                        detected.append(tname)
-            except json.JSONDecodeError:
-                pass
-
+        if any((path / marker).is_file() for marker in markers):
+            detected.append(framework)
+    # Audit #5: JUnit is NOT implied by a bare pom.xml / build.gradle — only
+    # when a real junit/jupiter/surefire dependency or a *Test file exists.
+    if _detect_junit(path) and "JUnit 5" not in detected:
+        detected.append("JUnit 5")
+    if _detect_pytest(path) and "pytest" not in detected:
+        detected.append("pytest")
+    for tname in _detect_node_test_deps(path):
+        if tname not in detected:
+            detected.append(tname)
     return detected
+
+
+def _detect_junit(path: Path) -> bool:
+    """True when JUnit is evidenced by a dependency or a test file (never a bare pom)."""
+    pom = path / "pom.xml"
+    if pom.is_file():
+        content = (_safe_read(pom) or "").lower()
+        if any(marker in content for marker in (
+            "junit", "jupiter", "surefire", "failsafe", "testng", "mockito", "assertj",
+        )):
+            return True
+    gradle = path / "build.gradle"
+    if gradle.is_file():
+        content = (_safe_read(gradle) or "").lower()
+        if any(marker in content for marker in (
+            "junit", "jupiter", "testng", "mockito", "assertj", "usejunitplatform",
+        )):
+            return True
+    # A *Test.java / *Tests.java file is itself evidence of a JUnit-style suite.
+    for pat in ("*Test.java", "*Tests.java", "*Test.kt", "*Tests.kt"):
+        try:
+            for f in path.rglob(pat):
+                if any(s in f.parts for s in _SKIP_DIRS):
+                    continue
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _detect_line_length(path: Path) -> tuple[int, str] | None:
@@ -283,13 +326,20 @@ def _detect_editor(path: Path) -> str | None:
 def _is_monorepo(path: Path) -> bool:
     """Simple heuristic to detect a monorepo."""
     markers = 0
-    # Multiple build systems
+    # Multiple build systems — audit #2: two nested manifests already make a
+    # monorepo (e.g. backend/ + frontend/ each with a package.json).
     builds = 0
+    try:
+        children = list(path.iterdir())
+    except OSError:
+        children = []
     for bs in ["pom.xml", "build.gradle", "Cargo.toml", "go.mod",
                "package.json", "pyproject.toml"]:
-        for child in path.iterdir():
+        for child in children:
             if child.is_dir() and (child / bs).is_file():
                 builds += 1
+    if builds >= 2:
+        return True
     if builds >= 3:
         markers += 1
     # Standard monorepo descriptors
@@ -362,12 +412,31 @@ def _count_test_files(path: Path) -> int:
     """Count test files by naming convention (test_*.py, *.test.ts, *_test.go...)."""
     patterns = ("test_*.py", "*_test.py", "*_test.go", "*_test.rs",
                 "*.test.ts", "*.test.tsx", "*.test.js", "*.test.jsx",
+                "*.test.mjs", "*.test.cjs", "*.test.mts", "*.test.cts",
                 "*.spec.ts", "*.spec.js", "*.spec.tsx",
+                "*.spec.mjs", "*.spec.cjs",
                 "*Test.java", "*Tests.java", "*Test.kt", "*Tests.kt")
     count = 0
     for pat in patterns:
         for f in path.rglob(pat):
             if any(s in f.parts for s in _SKIP_DIRS):
+                continue
+            count += 1
+    # Bare `*.mjs` / `*.cjs` under a tests/ (or __tests__/) folder are real
+    # suites for the built-in `node --test` runner (audit #2): the runner
+    # needs no config file and no dependency, the folder layout is the
+    # only marker. Count them once (patterns above already cover *.test.mjs).
+    for test_dir_name in ("tests", "test", "__tests__"):
+        for f in path.rglob(f"{test_dir_name}/*.mjs"):
+            if any(s in f.parts for s in _SKIP_DIRS):
+                continue
+            if ".test." in f.name or ".spec." in f.name:
+                continue  # already counted above
+            count += 1
+        for f in path.rglob(f"{test_dir_name}/*.cjs"):
+            if any(s in f.parts for s in _SKIP_DIRS):
+                continue
+            if ".test." in f.name or ".spec." in f.name:
                 continue
             count += 1
     return count

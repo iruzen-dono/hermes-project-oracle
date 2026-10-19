@@ -168,6 +168,19 @@ def _detect_node(package_json: Path | None, root: Path | None = None) -> dict[st
     if isinstance(scripts, dict) and "test" in scripts:
         result["has_test_script"] = True
         result["test_command"] = str(scripts["test"])[:200]
+    # Built-in runner: `node --test` needs no dependency (audit #2).
+    # A test script invoking it (e.g. `node --test tests/*.mjs`) is real
+    # evidence of a suite even with zero test deps installed.
+    if isinstance(scripts, dict):
+        for _cmd in scripts.values():
+            if re.search(r"(^|[\s&|;])node\s+--test\b", str(_cmd)):
+                result["has_test_script"] = True
+                if "test_command" not in result:
+                    result["test_command"] = str(_cmd)[:200]
+                if "node --test" not in test_tools:
+                    test_tools = [*test_tools, "node --test"]
+                    result["test_tools"] = test_tools
+                break
 
     # Package manager detection
     for pm_file, pm_name in [
@@ -315,6 +328,35 @@ def _detect_php(composer: Path | None, root: Path | None = None) -> dict[str, An
     return result
 
 
+def _detect_make(makefile: Path | None, root: Path | None = None) -> dict[str, Any]:
+    """Extract runnable targets from a Makefile (audit #10).
+
+    A Makefile listed as bare "Make" gives the agent nothing to run.
+    Targets are the `name:` lines at column 0 (`.PHONY:` and variable
+    assignments excluded); the first 15 are kept as `scripts`-like entries
+    so the generator renders `make <target>`.
+    """
+    result: dict[str, Any] = {"present": True}
+    content = _read_maybe_rooted(makefile, root)
+    if not content:
+        return result
+    targets: dict[str, str] = {}
+    for line in content.splitlines():
+        if not line or line[0] in (" ", "\t", ".", "#", "$", "="):
+            continue
+        m = re.match(r"^([A-Za-z0-9][A-Za-z0-9_.\-/]*)\s*:(?!:=|:?=)", line)
+        if m:
+            name = m.group(1)
+            if name.lower() not in ("phony",) and name not in targets:
+                targets[name] = f"make {name}"
+                if len(targets) >= 15:
+                    break
+    if targets:
+        result["scripts"] = targets
+        result["pm"] = "make"
+    return result
+
+
 def detect_build_system(path: Path) -> list[dict[str, Any]]:
     """Detect build systems and config files."""
     config_scanners = [
@@ -330,7 +372,7 @@ def detect_build_system(path: Path) -> list[dict[str, Any]]:
         ("composer.json", "PHP/Composer", _detect_php),
         ("Gemfile", "Ruby/Bundler", None),
         ("CMakeLists.txt", "CMake", None),
-        ("Makefile", "Make", None),
+        ("Makefile", "Make", _detect_make),
         ("mix.exs", "Elixir/Mix", None),
         ("project.clj", "Clojure/Leiningen", None),
         ("stack.yaml", "Haskell/Stack", None),
@@ -424,6 +466,11 @@ def detect_entry_points(path: Path) -> list[dict[str, str]]:
     }
 
     entries = []
+    # Audit #10: never classify a config/settings module as an entry point —
+    # `backend/src/config/index.js` (or conf/, settings/, config.py) is
+    # imported, never executed directly.
+    _CONFIG_PARTS = {"config", "conf", "settings", "__tests__", "tests",
+                     "test", "__mocks__", "mocks", "fixtures"}
     for pat, etype in patterns.items():
         for found in path.rglob(pat):
             if found.is_file() and not any(
@@ -432,6 +479,8 @@ def detect_entry_points(path: Path) -> list[dict[str, str]]:
                 try:
                     rel = found.relative_to(path)
                 except ValueError:
+                    continue
+                if any(part.lower() in _CONFIG_PARTS for part in rel.parts[:-1]):
                     continue
                 entries.append({"path": str(rel.as_posix()), "type": etype})
 

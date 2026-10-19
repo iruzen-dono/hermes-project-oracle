@@ -66,13 +66,15 @@ class TestTomlAndUrl(unittest.TestCase):
         self.assertEqual(io.load_toml('name = "x"')["name"], "x")
 
     def test_sanitize_remote_url(self):
-        # Credentials are masked, never echoed: token@ -> ***@
+        # Credentials are masked, never echoed: user-info -> ***@.
+        # NOTE: EXAMPLE-USER / EXAMPLE-TOKEN are obviously-fake placeholders
+        # (not real secrets) so secret-scanners never flag this test.
         self.assertEqual(
-            k.sanitize_remote_url("https://user:token@github.com/org/repo.git"),
+            k.sanitize_remote_url("https://EXAMPLE-USER:EXAMPLE-TOKEN@github.com/org/repo.git"),
             "https://***@github.com/org/repo.git",
         )
-        self.assertNotIn("token", k.sanitize_remote_url(
-            "https://user:token@github.com/org/repo.git"))
+        self.assertNotIn("EXAMPLE-TOKEN", k.sanitize_remote_url(
+            "https://EXAMPLE-USER:EXAMPLE-TOKEN@github.com/org/repo.git"))
         self.assertEqual(
             k.sanitize_remote_url("https://github.com/org/repo.git"),
             "https://github.com/org/repo.git",

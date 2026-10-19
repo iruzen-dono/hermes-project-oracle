@@ -47,4 +47,4 @@ jobs:
       - name: Run tests
         run: >-
           python -m pytest tests/ -v --tb=short
-          --cov=scripts --cov-report=term --cov-fail-under=20
+          --cov=scripts --cov-report=term --cov-fail-under=60

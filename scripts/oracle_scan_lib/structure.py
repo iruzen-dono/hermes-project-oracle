@@ -44,7 +44,16 @@ def _collect_nested_packages(path: Path, max_depth: int = 2, max_packages: int =
                         rel = str(tf.relative_to(path).as_posix())
                     except ValueError:
                         rel = tf.name
-                    found.append({"file": rel, "parsed": parsed})
+                    try:
+                        pkg_dir = str(tf.parent.relative_to(path).as_posix())
+                    except ValueError:
+                        pkg_dir = "."
+                    if isinstance(parsed, dict):
+                        # Audit #1: remember where each manifest lives so the
+                        # generator can prefix commands with their directory
+                        # (e.g. `cd backend && npm run dev`).
+                        parsed["pkg_dir"] = pkg_dir
+                    found.append({"file": rel, "parsed": parsed, "dir": pkg_dir})
                     break
             walk(child, depth + 1)
 

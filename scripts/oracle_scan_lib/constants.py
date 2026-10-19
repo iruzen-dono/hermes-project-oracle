@@ -85,15 +85,18 @@ NODE_TEST_PACKAGES = ("jest", "vitest", "mocha", "playwright", "@playwright/test
 # Names commonly used for example env files (never the real .env).
 ENV_EXAMPLE_NAMES = (".env.example", ".env.sample", ".env.template", ".env.dist")
 
-# Matches credentials embedded in a URL authority component (user:token@host).
+# Matches credentials embedded in a URL authority component (the user-info
+# part before the host separator).
 CREDENTIAL_IN_URL_RE = re.compile(r"//[^@/]+@")
 
 
 def sanitize_remote_url(url: str) -> str:
     """Mask credentials embedded in a remote URL (tokens, passwords).
 
-    `https://user:token@github.com/x/y.git` -> `https://***@github.com/x/y.git`
-    Query-string tokens are dropped. SSH URLs (`git@host:...`) are untouched.
+    A URL carrying user info (``user`` + ``token`` before the ``@`` host
+    separator) becomes ``https://***@host/...`` — the secret part never
+    reaches the report. Query-string tokens are dropped. SSH URLs
+    (``git@host:...``) are untouched.
     """
     sanitized = CREDENTIAL_IN_URL_RE.sub("//***@", url)
     if "?" in sanitized:

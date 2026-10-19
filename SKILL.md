@@ -43,7 +43,7 @@ Ask the user (see `references/interview-script.md` for the full script):
 4. What must never be touched or overwritten?
 5. Which conventions are unwritten but real?
 
-Save the answers as `intent.json` (see `examples/intent-example.json`):
+Save the answers as `intent.json` (see `references/intent-example.json`):
 `{"purpose": "...", "pitfalls": [{"area": "...", "note": "..."}]}`.
 
 ### 2. Scan

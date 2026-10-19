@@ -25,16 +25,20 @@ SKILL_MD = REPO / "SKILL.md"
 # `tests/` and `.github/` are development artifacts — the skill runtime does
 # not need them, and installing the skill must stay lean.
 SKIP_DIRS = {
-    ".git", "__pycache__", ".pytest_cache", ".ruff_cache", ".oracle",
-    "node_modules", ".venv", "venv", "tests", ".github",
+    ".git", "__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache",
+    ".oracle", "node_modules", ".venv", "venv", "tests", ".github",
+    "examples",  # audit #6: examples/ moved under references/
 }
 # File suffixes never shipped (binaries, caches, archives). Excluding every
 # `.zip` guarantees the archive can never include itself, whatever the clone
 # folder happens to be named.
 SKIP_SUFFIXES = {".pyc", ".pyo", ".pyd", ".DS_Store", ".zip"}
 # OS junk / secrets / repo-dev files by exact name.
+# Audit #6: `.coveragerc` is repo-dev tooling (coverage config for local
+# runs) — never shipped inside the skill zip.
 SKIP_NAMES = {"Thumbs.db", ".DS_Store", "desktop.ini", ".env",
-              "package_skill.py", "ruff.toml", ".gitignore"}
+              "package_skill.py", "ruff.toml", ".gitignore", ".coveragerc",
+              ".coverage", "hermes-project-oracle.zip"}
 
 
 def skill_name() -> str:
@@ -50,7 +54,20 @@ def skill_name() -> str:
     return nm.group(1).strip().strip('"').strip("'")
 
 
+# Only these root-level entries may ship: the skill doc, license, readme and
+# the two support directories. Everything else at the repo root (scratch
+# logs, dev helpers, local audit files) stays out of the archive — an
+# allowlist beats a blocklist when the repo root accumulates junk.
+ROOT_ALLOW = {"SKILL.md", "LICENSE", "README.md", "scripts", "references"}
+
+
 def should_ship(p: Path) -> bool:
+    try:
+        top = p.relative_to(REPO).parts[0]
+    except (ValueError, IndexError):
+        return False
+    if top not in ROOT_ALLOW:
+        return False
     if p.name in SKIP_NAMES:
         return False
     if p.suffix in SKIP_SUFFIXES:

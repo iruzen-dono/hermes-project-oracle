@@ -1,5 +1,6 @@
 [run]
 source = scripts
+parallel = true
 omit =
     scripts/version.py
 

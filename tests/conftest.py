@@ -2,10 +2,10 @@
 
 Put ``scripts/`` on ``sys.path`` so tests import the real modules (and so
 ``--cov`` hooks onto them instead of only the subprocess entrypoints).
-Coverage inside subprocesses is intentionally not measured: the E2E tests
-launch the CLIs with ``subprocess.run`` and chasing parallel coverage data
-across temp cwd directories proved fragile (notably on Windows). The unit
-tests in ``test_oracle_lib.py`` exercise the same code paths in-process.
+Subprocess coverage (audit #9): the E2E tests launch the CLIs via
+``subprocess.run`` — with ``parallel = true`` in ``.coveragerc``, every child
+process started with ``COVERAGE_PROCESS_START`` set writes its own data file,
+later combined with ``coverage combine``. See ``_run`` in ``test_oracle.py``.
 """
 import sys
 from pathlib import Path

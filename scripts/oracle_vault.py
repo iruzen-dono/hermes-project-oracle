@@ -19,6 +19,15 @@ import sys
 from pathlib import Path
 
 try:
+    from version import start_subprocess_coverage
+except ImportError:  # standalone copy — silently skip (audit #9)
+    def start_subprocess_coverage() -> None:  # type: ignore[misc]
+        """Fallback no-op when version.py is unavailable."""
+        return None
+
+start_subprocess_coverage()
+
+try:
     from safe_io import atomic_write
 except ImportError:  # standalone copy — minimal atomic fallback (temp + replace)
     import os

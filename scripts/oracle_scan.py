@@ -26,9 +26,15 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from version import __version__
+    from version import __version__, start_subprocess_coverage
 except ImportError:  # scripts/ not on sys.path — visible, not silently wrong
     __version__ = "unknown"
+
+    def start_subprocess_coverage() -> None:  # type: ignore[misc]
+        """Fallback no-op when version.py is unavailable."""
+        return None
+
+start_subprocess_coverage()
 
 try:
     from safe_io import atomic_write
@@ -170,7 +176,9 @@ def main() -> None:
     for np in nested_packages:
         build_systems.append({
             "file": np["file"],
-            "label": f"nested: {Path(np['file']).name}",
+            # Audit #1: keep the owning directory in the label — same script
+            # name in backend/ and frontend/ must stay distinguishable.
+            "label": f"nested: {np['file']}",
             "parsed": np["parsed"],
         })
 

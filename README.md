@@ -32,7 +32,7 @@ touches code.
 ## Install
 
 Install from the packaged skill zip — it contains only what the skill needs
-(`SKILL.md`, `scripts/`, `references/`, `examples/`), not `.git/`, tests or
+(`SKILL.md`, `scripts/`, `references/`), not `.git/`, tests or
 build artifacts:
 
 ```bash
@@ -78,7 +78,7 @@ file path. Run any script with `--help` for all flags.
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/oracle_scan.py` | Deep project scan → JSON report (288 file extensions, credential-safe) |
+| `scripts/oracle_scan.py` | Deep project scan → JSON report (28 languages, credential-safe) |
 | `scripts/oracle_generate.py` | Report → context files (4 templates + optional intent file) |
 | `scripts/oracle_vault.py` | Push a structured note into an Obsidian vault |
 
@@ -86,8 +86,8 @@ file path. Run any script with `--help` for all flags.
 
 - Full skill instructions: [`SKILL.md`](SKILL.md)
 - Interview script (intent + pitfalls): [`references/interview-script.md`](references/interview-script.md)
-- Example intent file: [`examples/intent-example.json`](examples/intent-example.json)
-- Example generated output: [`examples/agents-md-example.md`](examples/agents-md-example.md)
+- Example intent file: [`references/intent-example.json`](references/intent-example.json)
+- Example generated output: [`references/agents-md-example.md`](references/agents-md-example.md)
 
 ## Development
 
