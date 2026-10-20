@@ -23,10 +23,12 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v4
+      # v5/v6 target Node 24 — v4/v5 emit the "Node.js 20 is deprecated"
+      # annotation on every run (forced onto Node 24 anyway).
+      - uses: actions/checkout@v5
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
