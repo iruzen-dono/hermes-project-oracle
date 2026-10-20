@@ -99,7 +99,11 @@ class TestVaultPathSafety(unittest.TestCase):
             outside = Path(out)
 
             note = push_to_vault(vault, "proj", "v1", category="Notes", force=True)
-            self.assertTrue(note.is_relative_to(vault))
+            # push_to_vault writes under vault.resolve() — compare like with like:
+            # on macOS the temp dir resolves /var -> /private/var (symlink), on the
+            # Windows runner it is an 8.3 short path (RUNNER~1 -> runneradmin), so
+            # an unresolved `vault` is NOT a textual prefix of the resolved `note`.
+            self.assertTrue(note.is_relative_to(vault.resolve()))
 
             # An existing note is never overwritten silently.
             with self.assertRaises(FileExistsError):
