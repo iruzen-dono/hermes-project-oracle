@@ -15,3 +15,7 @@ Thumbs.db
 .coverage.*
 .mypy_cache/
 .pytest_cache/
+# Scratch logs + the personal audit helper (repo-local, never shipped:
+# package_skill.py already allowlists the zip root, this just quiets `git status`)
+_*.txt
+_full_audit.py
