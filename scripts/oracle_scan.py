@@ -297,7 +297,7 @@ def main() -> None:
             if resolved_out.is_relative_to(root):
                 gitignore = root / ".gitignore"
                 if gitignore.is_file():
-                    gi = gitignore.read_text(encoding="utf-8", errors="replace")
+                    gi = gitignore.read_text(encoding="utf-8-sig", errors="replace")
                     if not any(line.strip() in (".oracle", ".oracle/", "/.oracle/")
                                for line in gi.splitlines()):
                         sep = "" if gi.endswith("\n") or not gi else "\n"

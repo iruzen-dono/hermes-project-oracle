@@ -32,14 +32,20 @@ def read_in_root(target: Path, root: Path, max_bytes: int = 50_000) -> str | Non
 
 
 def safe_read(path: Path, max_bytes: int = 50_000) -> str | None:
-    """Read a text file when its size is reasonable."""
+    """Read a text file when its size is reasonable.
+
+    ``utf-8-sig`` (audit: BOM) transparently strips a UTF-8 BOM when present
+    and behaves exactly like ``utf-8`` otherwise — a package.json/pyproject.toml
+    saved by Windows editors must never be silently ignored (React, scripts,
+    deps and summary all vanished behind a 3-byte BOM).
+    """
     try:
         if not path.is_file():
             return None
         if path.stat().st_size > max_bytes:
             log.debug("Skipping large file (%d bytes): %s", path.stat().st_size, path)
             return None
-        return path.read_text(encoding="utf-8", errors="replace")
+        return path.read_text(encoding="utf-8-sig", errors="replace")
     except PermissionError:
         log.debug("Permission denied: %s", path)
         return None

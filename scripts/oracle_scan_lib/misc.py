@@ -58,7 +58,7 @@ def _detect_misc(path: Path) -> dict[str, Any]:
         except OSError:
             continue
         try:
-            text = readme_path.read_text(encoding="utf-8", errors="replace")
+            text = readme_path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             break
         para: list[str] = []
@@ -94,7 +94,7 @@ def _module_docstring(path: Path, root: Path | None = None) -> str | None:
     except OSError:
         return None
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
     except (OSError, SyntaxError, ValueError):
         return None
     doc = ast.get_docstring(tree)

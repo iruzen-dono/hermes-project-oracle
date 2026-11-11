@@ -125,6 +125,176 @@ def _sanitize_untrusted(text: Any) -> str:
     return flat
 
 
+def _safe_token(text: Any, max_len: int = 120) -> str:
+    """Reduce untrusted text to ONE safe inline token (no code-span escape).
+
+    Used for identifiers that land inside Markdown code spans (branch names,
+    file paths, npm script names/commands, remote URLs). A backtick would
+    close the span and let the rest of the value become live Markdown, so
+    backticks and control characters are removed; newlines are collapsed so a
+    value can never introduce a new line, heading or list item.
+
+    The update markers `<!-- oracle:… -->` are neutralized too: they would
+    otherwise let an untrusted value close the generated section early and
+    make the NEXT regeneration corrupt the file (audit #8).
+    """
+    raw = str(text)
+    flat = "".join(ch for ch in raw if ch.isprintable() and ch != "`")
+    flat = " ".join(flat.split())
+    flat = flat.replace("<!--", "&lt;!--").replace("-->", "--&gt;")
+    if len(flat) > max_len:
+        flat = flat[: max_len - 1].rstrip() + "…"
+    return flat
+
+
+def _yaml_text(text: Any, max_len: int = 80) -> str:
+    """Reduce untrusted text to ONE safe plain text (no YAML quoting).
+
+    Used inside the Obsidian frontmatter (``tags: [a, b]``, ``frameworks: [...]``).
+    A value containing a flow indicator (``,`` ``[`` ``]`` ``{`` ``}``), a quote,
+    a comment marker (``#``), a tag/anchor/alias (``!`` ``&`` ``*``), a
+    directive (``%``), a reserved indicator (``@`` `` ` ``), a block scalar
+    header (``|`` ``>``) or a mapping colon would either close the flow
+    sequence and turn the rest of the line into arbitrary YAML — or make the
+    whole frontmatter unparsable (a ScannerError breaks the note for Obsidian
+    too). All of them are removed here, and the value is additionally stripped
+    of the leading sequence/mapping indicators (``-`` ``?`` ``:``) that would
+    turn the item into something else than a plain string.
+    """
+    flat = _safe_token(text, max_len=max_len)
+    flat = "".join(
+        ch for ch in flat
+        if ch not in ",[]{}\"'|\\#&*!%@`>?:"
+    )
+    # A leading `-`/`?`/`.` would make the item a sequence entry or a mapping
+    # key instead of a plain scalar.
+    flat = flat.lstrip("-?. ").strip()
+    # An empty item (``tags: [, b]``) is not what the reader expects — keep a
+    # neutral placeholder instead.
+    return flat or "unknown"
+
+
+def _yaml_item(text: Any, max_len: int = 80) -> str:
+    """Render untrusted text as ONE quoted YAML flow-scalar item.
+
+    The value is ALWAYS double-quoted: unquoted, YAML resolves ``true``,
+    ``false``, ``null``, ``~``, ``123`` or ``1.5`` to a bool/null/number
+    instead of the string the value actually is (a framework literally named
+    "true" must not turn the tag list into a boolean). The double quotes and
+    backslashes are the only characters that need escaping inside a
+    double-quoted YAML scalar, and both are already stripped/escaped by
+    ``_yaml_text`` and this function.
+    """
+    flat = _yaml_text(text, max_len=max_len)
+    escaped = flat.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _yaml_count(value: Any) -> str:
+    """Render an untrusted count as a YAML-safe integer.
+
+    ``_safe_count`` returns ``?`` for an unknown number — but ``files_count: ?``
+    is NOT valid YAML (the scanner reads ``?`` as an explicit-key indicator and
+    aborts with "mapping keys are not allowed here"), which would break the
+    whole frontmatter. In YAML context an unknown count is simply ``0``.
+    """
+    num = _safe_int(value, 0)
+    return str(num) if num >= 0 else "0"
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    """Coerce an untrusted report number to a plain int.
+
+    The scan report is JSON produced by the scanner, but it can also be
+    hand-edited or crafted by a hostile project. A count rendered with an
+    f-string (`{value} files`) would otherwise smuggle newlines or Markdown
+    into the generated file, and an f-string format specifier (`{value:5d}`)
+    would raise on a non-numeric value — crashing the whole generation.
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_ratio(value: Any) -> str:
+    """Render an untrusted percentage as a safe inline number."""
+    num = _safe_int(value, -1)
+    return f"{num}%" if num >= 0 else "?"
+
+
+def _safe_count(value: Any) -> str:
+    """Render an untrusted count as a safe inline number ('?' when missing)."""
+    num = _safe_int(value, -1)
+    return str(num) if num >= 0 else "?"
+
+
+def _safe_dict(value: Any) -> dict[str, Any]:
+    """Coerce an untrusted report field to a plain dict (never None)."""
+    return value if isinstance(value, dict) else {}
+
+
+def _safe_str_list(value: Any) -> list[str]:
+    """Coerce an untrusted report field to a list of plain strings.
+
+    A malformed report may hold a string where a list is expected (iterating
+    it would yield single characters) or a dict (yielding its keys). Both are
+    normalised here so the renderers can iterate safely.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [str(k) for k in value]
+    if isinstance(value, (list, tuple, set)):
+        return [str(v) for v in value]
+    return [str(value)]
+
+
+def _safe_dict_list(value: Any) -> list[dict[str, Any]]:
+    """Coerce an untrusted report field to a list of dicts (never None).
+
+    A malformed report may hold a string or a number where a list of
+    objects is expected; those entries are dropped instead of crashing the
+    renderer that iterates them.
+    """
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _safe_filename(value: Any, fallback: str = "project") -> str:
+    """Reduce untrusted text to ONE safe file-name component.
+
+    The project name comes from the scanned project (or from ``--name``) and
+    is used to build the output file name. Without this, a name like
+    ``../../escape`` would write outside the chosen output directory.
+    """
+    flat = str(value).replace("\\", "/").split("/")[-1]
+    cleaned = re.sub(r'[<>:"|?*\x00-\x1f]', "_", flat).strip(". ")
+    return cleaned[:120] or fallback
+
+
+def _safe_date(value: Any) -> str:
+    """Extract an ISO date (YYYY-MM-DD) from an untrusted timestamp.
+
+    The scan time lands in the Obsidian frontmatter as a bare YAML scalar.
+    A hostile report could put `2024-01-01: !!python/object/apply:os.system [...]`
+    there — a YAML tag injection. Only a strict ``YYYY-MM-DD`` prefix is
+    accepted; anything else yields an empty string (no date line at all).
+    """
+    match = re.match(r"^(\d{4}-\d{2}-\d{2})", str(value or ""))
+    return match.group(1) if match else ""
+
+
+
 def _cite(text: Any) -> str:
     """Flatten untrusted text and present it as a quoted blockquote."""
     return f"> {_sanitize_untrusted(text)}"
@@ -179,17 +349,17 @@ def _language_commands(report: dict[str, Any]) -> list[tuple[str, list[str]]]:
     """
     root_manifests = {
         Path(str(bs.get("file", ""))).name
-        for bs in report.get("build_systems", [])
+        for bs in _safe_dict_list(report.get("build_systems"))
         if not str(bs.get("label", "")).startswith("nested:")
     }
-    conv = report.get("conventions", {})
+    conv = _safe_dict(report.get("conventions"))
     groups: list[tuple[str, list[str]]] = []
 
     if root_manifests & {"pyproject.toml", "setup.py", "setup.cfg"}:
         cmds = ["python -m pip install -e ."]
-        if "pytest" in (conv.get("test_frameworks") or []):
+        if "pytest" in _safe_str_list(conv.get("test_frameworks")):
             cmds.append("python -m pytest")
-        quality = set(conv.get("quality_tools") or [])
+        quality = set(_safe_str_list(conv.get("quality_tools")))
         if quality & {"ruff.toml", ".ruff.toml"}:
             cmds.append("ruff check .")
         if conv.get("python_formatter") == "Black":
@@ -226,16 +396,20 @@ def _agents_intent(report: dict[str, Any], intent: dict[str, Any]) -> list[str]:
         # explicitly UNTRUSTED excerpt, never as instructions.
         lines.extend(_untrusted_block(f"source: {src}", report["summary"]))
         lines.append("")
-    if intent.get("pitfalls"):
+    pitfalls = intent.get("pitfalls")
+    if isinstance(pitfalls, (list, tuple)):
+        dicts = [p for p in pitfalls[:15] if isinstance(p, dict)]
+        plains = [p for p in pitfalls[:15] if not isinstance(p, dict)]
+    else:
+        dicts, plains = [], []
+    if dicts or plains:
         lines.append("## Known pitfalls")
         lines.append("*(reported by the project owner — read before touching these areas)*")
-        for p in intent["pitfalls"][:15]:
-            if isinstance(p, dict):
-                title = _sanitize_untrusted(p.get("area", "General"))
-                note = _sanitize_untrusted(p.get("note", ""))
-                lines.append(f"- **{title}**: {note}")
-            else:
-                lines.append(f"- {_sanitize_untrusted(p)}")
+        for p in dicts:
+            title = _sanitize_untrusted(p.get("area", "General"))
+            note = _sanitize_untrusted(p.get("note", ""))
+            lines.append(f"- **{title}**: {note}")
+        lines.extend(f"- {_sanitize_untrusted(p)}" for p in plains)
         lines.append("")
     return lines
 
@@ -249,8 +423,8 @@ def _agents_stack(
         f"- **Languages**: {lang_summary}",
         f"- **Frameworks**: {fw_str}",
         (
-            f"- **Size**: {report.get('file_count', '?')} files, "
-            f"{report.get('dir_count', '?')} directories"
+            f"- **Size**: {_safe_count(report.get('file_count'))} files, "
+            f"{_safe_count(report.get('dir_count'))} directories"
         ),
         "",
     ]
@@ -259,8 +433,15 @@ def _agents_stack(
 def _agents_manifests(build_systems: list[Any], report: dict[str, Any]) -> list[str]:
     """Root manifests, runnable npm scripts, language commands, nested packages."""
     lines: list[str] = []
-    root_bs = [bs for bs in build_systems if not bs.get("label", "").startswith("nested:")]
-    nested_bs = [bs for bs in build_systems if bs.get("label", "").startswith("nested:")]
+    build_systems = _safe_dict_list(build_systems)
+    root_bs = [
+        bs for bs in build_systems
+        if not str(bs.get("label", "")).startswith("nested:")
+    ]
+    nested_bs = [
+        bs for bs in build_systems
+        if str(bs.get("label", "")).startswith("nested:")
+    ]
     if root_bs:
         lines.append("### Build systems & manifests")
         for bs in root_bs:
@@ -269,12 +450,14 @@ def _agents_manifests(build_systems: list[Any], report: dict[str, Any]) -> list[
             extra = ""
             if isinstance(parsed, dict):
                 if parsed.get("frameworks"):
-                    extra = f" → {', '.join(parsed['frameworks'])}"
+                    extra = " → " + ", ".join(
+                        _safe_token(f) for f in _safe_str_list(parsed["frameworks"])
+                    )
                 elif parsed.get("framework"):
-                    extra = f" → {parsed['framework']}"
+                    extra = f" → {_safe_token(parsed['framework'])}"
                 if parsed.get("pm"):
-                    extra += f" (pm: {parsed['pm']})"
-            lines.append(f"- `{label}`{extra}")
+                    extra += f" (pm: {_safe_token(parsed['pm'])})"
+            lines.append(f"- `{_safe_token(label)}`{extra}")
         lines.append("")
 
     # npm scripts with their real commands (agents need runnable commands).
@@ -284,12 +467,14 @@ def _agents_manifests(build_systems: list[Any], report: dict[str, Any]) -> list[
     npm_scripts: list[tuple[str, str, str, str]] = []  # (dir, name, cmd, pm)
     pm = "npm"
     for bs in build_systems:
+        if not isinstance(bs, dict):
+            continue
         parsed = bs.get("parsed", {})
         if not (isinstance(parsed, dict) and isinstance(parsed.get("scripts"), dict)):
             continue
-        label = bs.get("label", "")
-        fname = bs.get("file", "")
-        if isinstance(parsed, dict) and parsed.get("pkg_dir"):
+        label = str(bs.get("label", "") or "")
+        fname = str(bs.get("file", "") or "")
+        if parsed.get("pkg_dir"):
             # Preferred: the scanner records the owning directory itself.
             pkg_dir = str(parsed["pkg_dir"]).strip() or "."
         elif label.startswith("nested:"):
@@ -298,25 +483,32 @@ def _agents_manifests(build_systems: list[Any], report: dict[str, Any]) -> list[
             pkg_dir = fname.rsplit("/", 1)[0]
         else:
             pkg_dir = "."
-        pkg_pm = parsed.get("pm", pm)
+        pkg_pm = str(parsed.get("pm", pm) or pm)
         if parsed.get("pm") and not label.startswith("nested:"):
             pm = parsed["pm"]
         for k, v in parsed["scripts"].items():
-            npm_scripts.append((pkg_dir, k, v, pkg_pm))
+            # Script name and command come from package.json — untrusted.
+            npm_scripts.append((pkg_dir, _safe_token(k), _safe_token(v, 200), pkg_pm))
     if npm_scripts:
         lines.append("### Commands (from manifests)")
         for pkg_dir, k, v, pkg_pm in npm_scripts[:12]:
             if pkg_pm == "make":
                 # Makefile target: already a runnable `make <target>` string.
                 if pkg_dir and pkg_dir != ".":
-                    lines.append(f"- `{k}` ({pkg_dir}/): `cd {pkg_dir} && {v}`")
+                    lines.append(
+                        f"- `{k}` ({_safe_token(pkg_dir)}/): "
+                        f"`cd {_safe_token(pkg_dir)} && {v}`"
+                    )
                 else:
                     lines.append(f"- `{v}`")
                 continue
             run = {"npm": "npm run", "yarn": "yarn", "pnpm": "pnpm run",
                    "bun": "bun run"}.get(pkg_pm, "npm run")
             if pkg_dir and pkg_dir != ".":
-                lines.append(f"- `{k}` ({pkg_dir}/): `cd {pkg_dir} && {run} {k}` → `{v}`")
+                lines.append(
+                    f"- `{k}` ({_safe_token(pkg_dir)}/): "
+                    f"`cd {_safe_token(pkg_dir)} && {run} {k}` → `{v}`"
+                )
             else:
                 lines.append(f"- `{run} {k}` → `{v}`")
         lines.append("")
@@ -336,11 +528,11 @@ def _agents_manifests(build_systems: list[Any], report: dict[str, Any]) -> list[
             parsed = bs.get("parsed", {})
             fws: list[str] = []
             if isinstance(parsed, dict):
-                fws = parsed.get("frameworks") or (
+                fws = _safe_str_list(parsed.get("frameworks")) or (
                     [parsed["framework"]] if parsed.get("framework") else []
                 )
-            suffix = f" — {', '.join(fws)}" if fws else ""
-            lines.append(f"- `{bs.get('file', '?')}`{suffix}")
+            suffix = f" — {', '.join(_safe_token(f) for f in fws)}" if fws else ""
+            lines.append(f"- `{_safe_token(bs.get('file', '?'))}`{suffix}")
         lines.append("")
     return lines
 
@@ -350,14 +542,21 @@ def _agents_languages(langs: list[dict[str, Any]]) -> list[str]:
     if not langs:
         return []
     lines = ["### Language breakdown"]
-    max_files = max(g["files"] for g in langs) if langs else 0
+    # A malformed report may contain non-dict entries — they must be ignored
+    # BEFORE the maximum is computed, otherwise `.get()` raises AttributeError
+    # and the whole generation dies.
+    items = [g for g in langs if isinstance(g, dict)]
+    if not items:
+        return lines + [""]
+    max_files = max(_safe_int(g.get("files")) for g in items)
     bar_width = 24
-    for lang in langs[:6]:
-        bar_len = int((lang["files"] / max_files) * bar_width) if max_files else 0
+    for lang in items[:6]:
+        files = _safe_int(lang.get("files"))
+        bar_len = int((files / max_files) * bar_width) if max_files else 0
         bar = "#" * bar_len
-        lines.append(
-            f"- {lang['name']:22s} {bar:<{bar_width}} {lang['files']:5d} ({lang['ratio']}%)"
-        )
+        name = _safe_token(lang.get("name", "?"))[:22]
+        ratio = _safe_ratio(lang.get("ratio"))
+        lines.append(f"- {name:22s} {bar:<{bar_width}} {files:5d} ({ratio})")
     lines.append("")
     return lines
 
@@ -371,17 +570,24 @@ def _agents_env(env_vars: dict[str, Any]) -> list[str]:
         "*(names only — values are never copied; see the example file for format)*",
     ]
     for fname, names in env_vars.items():
-        lines.append(f"- From `{fname}`: " + ", ".join(f"`{n}`" for n in names[:20]))
+        lines.append(
+            f"- From `{_safe_token(fname)}`: "
+            + ", ".join(f"`{_safe_token(n)}`" for n in _safe_str_list(names)[:20])
+        )
     lines.append("")
     return lines
 
 
 def _agents_entries(entries: list[dict[str, Any]]) -> list[str]:
     """Detected entry points (capped at 8)."""
+    entries = _safe_dict_list(entries)
     if not entries:
         return []
     lines = ["## Entry points"]
-    lines.extend(f"- `{ep['path']}` — {ep['type']}" for ep in entries[:8])
+    lines.extend(
+        f"- `{_safe_token(ep.get('path', '?'))}` — {_safe_token(ep.get('type', ''))}"
+        for ep in entries[:8]
+    )
     if len(entries) > 8:
         lines.append(f"- *... and {len(entries) - 8} more*")
     lines.append("")
@@ -391,26 +597,32 @@ def _agents_entries(entries: list[dict[str, Any]]) -> list[str]:
 def _agents_tests(conventions: dict[str, Any]) -> list[str]:
     """Test frameworks, quality tooling, CI/CD pipelines and Docker evidence."""
     lines: list[str] = []
-    if conventions.get("test_frameworks") or conventions.get("test_file_count"):
+    test_frameworks = _safe_str_list(conventions.get("test_frameworks"))
+    quality_tools = _safe_str_list(conventions.get("quality_tools"))
+    ci_cd = _safe_str_list(conventions.get("ci_cd"))
+    if test_frameworks or conventions.get("test_file_count"):
         lines.append("## Tests")
-        if conventions.get("test_frameworks"):
-            lines.append(f"- Frameworks: {', '.join(conventions['test_frameworks'])}")
+        if test_frameworks:
+            lines.append(
+                "- Frameworks: "
+                + ", ".join(_safe_token(t) for t in test_frameworks)
+            )
         if conventions.get("test_file_count"):
-            lines.append(f"- Test files found: {conventions['test_file_count']}")
-        if conventions.get("quality_tools"):
+            lines.append(f"- Test files found: {_safe_count(conventions['test_file_count'])}")
+        if quality_tools:
             lines.append(
                 "- Quality tooling: "
-                + ", ".join(f"`{t}`" for t in conventions["quality_tools"][:8])
+                + ", ".join(f"`{_safe_token(t)}`" for t in quality_tools[:8])
             )
         lines.append("")
 
-    if conventions.get("ci_cd"):
+    if ci_cd:
         lines.append("## CI/CD")
-        lines.extend(_bullet(conventions["ci_cd"]))
+        lines.extend(_bullet(ci_cd, _safe_token))
         lines.append("")
 
-    if conventions.get("docker"):
-        docker = conventions["docker"]
+    docker = conventions.get("docker")
+    if isinstance(docker, dict):
         docker_str = []
         if docker.get("has_dockerfile"):
             docker_str.append("Dockerfile")
@@ -425,14 +637,19 @@ def _agents_tests(conventions: dict[str, Any]) -> list[str]:
 
 def _agents_git(git: dict[str, Any]) -> list[str]:
     """Branch, remotes (credential-sanitised upstream) and commit count."""
+    git = _safe_dict(git)
     if not git.get("has_git"):
         return []
-    lines = ["## Git", f"- **Branch**: `{git.get('branch', '?')}`"]
-    if git.get("remotes"):
+    lines = ["## Git", f"- **Branch**: `{_safe_token(git.get('branch', '?'))}`"]
+    remotes = _safe_dict_list(git.get("remotes"))
+    if remotes:
         lines.append("- **Remote(s)**:")
-        lines.extend(f"  - `{r['name']}` → {r['url']}" for r in git["remotes"][:3])
+        lines.extend(
+            f"  - `{_safe_token(r.get('name', '?'))}` → {_safe_token(r.get('url', ''))}"
+            for r in remotes[:3]
+        )
     if git.get("commit_count"):
-        lines.append(f"- **Commits**: {git['commit_count']}")
+        lines.append(f"- **Commits**: {_safe_count(git['commit_count'])}")
     lines.append("")
     return lines
 
@@ -475,7 +692,8 @@ def _agents_rules(conventions: dict[str, Any]) -> list[str]:
     lines.append("5. **Do not modify config files** without asking")
     if conventions.get("editor"):
         lines.append(
-            f"6. **Editor**: this project uses {conventions['editor']} — respect its settings"
+            f"6. **Editor**: this project uses {_safe_token(conventions['editor'])} "
+            "— respect its settings"
         )
     lines.append("")
     lines.append("---")
@@ -509,21 +727,28 @@ def _agents_header(name: str, report: dict[str, Any]) -> list[str]:
 
 def render_agents_md(report: dict[str, Any]) -> str:
     """Generate a complete, standard AGENTS.md."""
-    name = report.get("project_name", "project")
-    langs = report.get("languages", [])
-    frameworks = report.get("frameworks") or (
-        [report["framework"]] if report.get("framework") else []
+    name = _safe_token(report.get("project_name", "project"))
+    langs = _safe_dict_list(report.get("languages"))
+    frameworks = _safe_str_list(
+        report.get("frameworks")
+        or ([report["framework"]] if report.get("framework") else [])
     )
-    entries = report.get("entry_points", [])
-    conventions = report.get("conventions", {})
-    git = report.get("git", {})
-    misc = report.get("misc", {})
-    build_systems = report.get("build_systems", [])
-    env_vars = report.get("env_files") or report.get("env_vars") or {}
-    intent = report.get("intent", {})
+    entries = _safe_dict_list(report.get("entry_points"))
+    conventions = _safe_dict(report.get("conventions"))
+    git = _safe_dict(report.get("git"))
+    misc = _safe_dict(report.get("misc"))
+    build_systems = _safe_dict_list(report.get("build_systems"))
+    env_vars = _safe_dict(report.get("env_files") or report.get("env_vars"))
+    intent = _safe_dict(report.get("intent"))
 
-    lang_summary = ", ".join(g["name"] for g in langs[:5]) or "not detected"
-    fw_str = ", ".join(frameworks) if frameworks else "not specified"
+    lang_summary = (
+        ", ".join(
+            _safe_token(g.get("name", "?")) for g in langs[:5] if isinstance(g, dict)
+        ) or "not detected"
+    )
+    fw_str = (
+        ", ".join(_safe_token(f) for f in frameworks) if frameworks else "not specified"
+    )
 
     lines = _agents_header(name, report)
 
@@ -563,12 +788,14 @@ def _claude_langs(lang_map: dict[str, str], conventions: dict[str, Any]) -> list
     if "python" in lang_map:
         lines.extend(["## Python", "- **Idiom**: PEP 8, snake_case, PascalCase classes"])
         if conventions.get("line_length"):
-            source = conventions.get("line_length_source", "project config")
+            source = _safe_token(conventions.get("line_length_source", "project config"))
             lines.append(
-                f"- **Line length**: {conventions['line_length']} characters ({source})"
+                f"- **Line length**: {_safe_count(conventions['line_length'])} characters ({source})"
             )
         if conventions.get("python_formatter"):
-            lines.append(f"- **Formatter**: {conventions['python_formatter']} (configured)")
+            lines.append(
+                f"- **Formatter**: {_safe_token(conventions['python_formatter'])} (configured)"
+            )
         lines.append("- Mirror the naming and structure of the module you are editing")
         lines.append("")
     if "typescript" in lang_map or "javascript" in lang_map:
@@ -619,12 +846,15 @@ def _claude_langs(lang_map: dict[str, str], conventions: dict[str, Any]) -> list
 
 def _claude_tests(conventions: dict[str, Any]) -> list[str]:
     """Tests section — only when there is real evidence (config or test files)."""
-    if not conventions.get("test_frameworks"):
+    test_frameworks = _safe_str_list(conventions.get("test_frameworks"))
+    if not test_frameworks:
         return []
     lines = ["## Tests"]
-    lines.extend(f"- Test runner: `{tf}`" for tf in conventions["test_frameworks"])
+    lines.extend(f"- Test runner: `{_safe_token(tf)}`" for tf in test_frameworks)
     if conventions.get("test_file_count"):
-        lines.append(f"- {conventions['test_file_count']} test file(s) found on disk")
+        lines.append(
+            f"- {_safe_count(conventions['test_file_count'])} test file(s) found on disk"
+        )
     lines.append("")
     return lines
 
@@ -633,12 +863,14 @@ def _claude_git_review(conventions: dict[str, Any]) -> list[str]:
     """Git + Review sections (evidence-driven wording)."""
     lines = ["## Git"]
     commit_conv = conventions.get("commit_convention", "")
+    if not isinstance(commit_conv, str):
+        commit_conv = ""
     if commit_conv.startswith("conventional-commits"):
         lines.append(
             "- Conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`"
         )
     elif commit_conv:
-        lines.append(f"- Commit style: {commit_conv}")
+        lines.append(f"- Commit style: {_safe_token(commit_conv)}")
     else:
         lines.append("- Match the existing commit message style")
     lines.append("- One PR = one concern")
@@ -648,7 +880,7 @@ def _claude_git_review(conventions: dict[str, Any]) -> list[str]:
     lines.append("")
     lines.append("## Review")
     lines.append("- Review your code before proposing it")
-    if conventions.get("test_frameworks") or conventions.get("test_file_count"):
+    if _safe_str_list(conventions.get("test_frameworks")) or conventions.get("test_file_count"):
         lines.append("- Verify tests pass")
     else:
         lines.append("- No test suite detected — do not invent one; verify by running the app")
@@ -659,11 +891,14 @@ def _claude_git_review(conventions: dict[str, Any]) -> list[str]:
 
 def render_claude_md(report: dict[str, Any]) -> str:
     """Generate a CLAUDE.md focused on code conventions."""
-    name = report.get("project_name", "project")
-    langs = report.get("languages", [])
-    conventions = report.get("conventions", {})
+    name = _safe_token(report.get("project_name", "project"))
+    langs = _safe_dict_list(report.get("languages"))
+    conventions = _safe_dict(report.get("conventions"))
 
-    lang_map = {g["key"]: g["name"] for g in langs}
+    lang_map = {
+        _safe_token(g.get("key", "?")): _safe_token(g.get("name", "?"))
+        for g in langs
+    }
     lines = _claude_header(name)
     lines += _claude_langs(lang_map, conventions)
 
@@ -679,32 +914,45 @@ def render_claude_md(report: dict[str, Any]) -> str:
 
 def render_obsidian(report: dict[str, Any]) -> str:
     """Generate a structured note for an Obsidian vault."""
-    name = report.get("project_name", "project")
-    langs = report.get("languages", [])
-    frameworks = report.get("frameworks") or (
-        [report["framework"]] if report.get("framework") else []
-    )
-    git = report.get("git", {})
-    misc = report.get("misc", {})
-    intent = report.get("intent", {})
+    name = _safe_token(report.get("project_name", "project"))
+    langs = _safe_dict_list(report.get("languages"))
+    # Two renderings of the same untrusted values:
+    #   * `frameworks` -> plain text, shown in the Markdown body;
+    #   * `fw_items`  -> quoted YAML items, used in the frontmatter.
+    frameworks = [
+        _yaml_text(fw) for fw in _safe_str_list(
+            report.get("frameworks")
+            or ([report["framework"]] if report.get("framework") else [])
+        )
+    ]
+    fw_items = [_yaml_item(fw) for fw in frameworks]
+    git = _safe_dict(report.get("git"))
+    misc = _safe_dict(report.get("misc"))
+    intent = _safe_dict(report.get("intent"))
 
-    tags = ["project"]
+    # Every frontmatter item is quoted the same way: a bare `project`/`none`
+    # would be a plain string today, but YAML 1.1 resolves several bare words
+    # (`no`, `off`, `y`, `n`, `on`…) to booleans — quoting every item removes
+    # the ambiguity entirely.
+    tags = [_yaml_item("project")]
     tags.extend(
-        fw.lower().replace(" ", "-").replace("/", "-").replace(".", "")
+        _yaml_item(
+            _yaml_text(fw).lower().replace(" ", "-").replace("/", "-").replace(".", "")
+        )
         for fw in frameworks[:3]
     )
-    tags.extend(g["key"] for g in langs[:3])
+    tags.extend(_yaml_item(g.get("key", "?")) for g in langs[:3])
 
     # Audit #3: the note's date comes from the SCAN REPORT (deterministic),
     # never from the wall clock — regenerating from the same report always
     # yields identical bytes, even across midnight.
-    scan_day = str(report.get("scan_time") or "")[:10]
+    scan_day = _safe_date(report.get("scan_time"))
     front: list[str] = ["---", f"tags: [{', '.join(tags)}]"]
     if scan_day:
         front.append(f"date_created: {scan_day}")
     front += [
-        f"files_count: {report.get('file_count', '?')}",
-        f"frameworks: [{', '.join(frameworks) if frameworks else 'none'}]",
+        f"files_count: {_yaml_count(report.get('file_count'))}",
+        f"frameworks: [{', '.join(fw_items) if fw_items else _yaml_item('none')}]",
         "---",
         "",
         f"# {name}",
@@ -712,51 +960,72 @@ def render_obsidian(report: dict[str, Any]) -> str:
         "## Stack",
     ]
     lines = front
-    lang_str = ", ".join(f"{g['name']} ({g['ratio']}%)" for g in langs[:5])
+    lang_str = ", ".join(
+        f"{_safe_token(g.get('name', '?'))} ({_safe_ratio(g.get('ratio'))})"
+        for g in langs[:5]
+    )
     lines.append(f"- **Languages**: {lang_str}")
     if frameworks:
         lines.append(f"- **Frameworks**: {', '.join(frameworks)}")
     lines.append(
-        f"- **Size**: {report.get('file_count', '?')} files, "
-        f"{report.get('dir_count', '?')} directories"
+        f"- **Size**: {_safe_count(report.get('file_count'))} files, "
+        f"{_safe_count(report.get('dir_count'))} directories"
     )
     lines.append("")
 
-    entries = report.get("entry_points", [])
+    entries = _safe_dict_list(report.get("entry_points"))
     if entries:
         lines.extend(
             ["## Entry points"]
-            + _bullet(entries, lambda e: f"`{e['path']}` → {e['type']}", 8)
+            + _bullet(
+                entries,
+                lambda e: f"`{_safe_token(e.get('path', '?'))}` → "
+                          f"{_safe_token(e.get('type', ''))}",
+                8,
+            )
         )
         lines.append("")
 
     if git.get("has_git"):
         lines.append("## Git")
-        lines.append(f"- **Branch**: `{git.get('branch', '?')}`")
+        lines.append(f"- **Branch**: `{_safe_token(git.get('branch', '?'))}`")
         lines.extend(
-            f"- `{r['name']}`: `{r['url']}`"
-            for r in git.get("remotes", [])[:3]
+            f"- `{_safe_token(r.get('name', '?'))}`: `{_safe_token(r.get('url', ''))}`"
+            for r in _safe_dict_list(git.get("remotes"))[:3]
         )
         lines.append("")
 
-    conv = report.get("conventions", {})
+    conv = _safe_dict(report.get("conventions"))
+    test_frameworks = _safe_str_list(conv.get("test_frameworks"))
+    ci_cd = _safe_str_list(conv.get("ci_cd"))
     lines.extend([
         "## Conventions",
-        f"- Tests: {', '.join(conv.get('test_frameworks', ['not detected']))}",
-        f"- CI/CD: {', '.join(conv.get('ci_cd', ['not detected']))}",
+        "- Tests: " + (", ".join(_safe_token(t) for t in test_frameworks)
+                        or "not detected"),
+        "- CI/CD: " + (", ".join(_safe_token(t) for t in ci_cd)
+                        or "not detected"),
     ])
     if misc.get("is_monorepo"):
         lines.append("- **Monorepo**: yes")
 
+    # Audit #8: the intent comes from the project owner (or an interview file)
+    # but lands in a note agents read as instructions — render it as an
+    # explicitly UNTRUSTED excerpt, flattened and marker-escaped, never as
+    # verbatim Markdown (a `## Heading` or an update marker would hijack the
+    # note or corrupt the next regeneration).
     if intent.get("purpose"):
-        lines.extend(["", "## Intent", "", str(intent["purpose"]).strip()])
-    if intent.get("pitfalls"):
+        lines.extend(["", "## Intent", ""])
+        lines.extend(_untrusted_block("source: intent", intent["purpose"]))
+    pitfalls = intent.get("pitfalls")
+    if isinstance(pitfalls, (list, tuple)) and pitfalls:
         lines.extend(["", "## Known pitfalls"])
-        for p in intent["pitfalls"][:15]:
+        for p in pitfalls[:15]:
             if isinstance(p, dict):
-                lines.append(f"- **{p.get('area', 'General')}**: {p.get('note', '')}")
+                area = _sanitize_untrusted(p.get("area", "General"))
+                note = _sanitize_untrusted(p.get("note", ""))
+                lines.append(f"- **{area}**: {note}")
             else:
-                lines.append(f"- {p}")
+                lines.append(f"- {_sanitize_untrusted(p)}")
 
     lines.extend([
         "",
@@ -808,7 +1077,7 @@ def render_final(out_path: Path, content: str, force: bool) -> tuple[str, str]:
     if not out_path.exists():
         return _wrap_markers(content), "created"
 
-    existing = out_path.read_text(encoding="utf-8")
+    existing = out_path.read_text(encoding="utf-8-sig")
     start = existing.find(MARKER_START)
     end = existing.find(MARKER_END)
     if start != -1 and end != -1 and end >= start:
@@ -848,7 +1117,7 @@ def write_output(out_path: Path, content: str, force: bool) -> str:
         log.info("Updated marked section in %s — text outside markers preserved",
                  out_path)
     elif action == "overwritten":
-        existing = out_path.read_text(encoding="utf-8")
+        existing = out_path.read_text(encoding="utf-8-sig")
         backup = out_path.with_name(out_path.name + ".bak")
         atomic_write(backup, existing)
         log.warning("Overwrote %s — previous content saved to %s", out_path, backup)
@@ -878,7 +1147,7 @@ def _dry_run(plan: list[tuple[str, Path, Any]], report: dict[str, Any],
             log.error("Failed to render %s: %s", tname, exc)
             continue
         final, action = render_final(out_path, content, force)
-        existing = out_path.read_text(encoding="utf-8") if out_path.exists() else None
+        existing = out_path.read_text(encoding="utf-8-sig") if out_path.exists() else None
         if existing == final:
             log.info("Up to date: %s", out_path)
             continue
@@ -936,10 +1205,13 @@ def _plan_outputs(args: argparse.Namespace,
         return plan
 
     fname, renderer = TEMPLATES[args.template]
+    # The project name comes from the (untrusted) scan report — it must never
+    # be able to steer the write outside the chosen output directory.
+    safe_name = _safe_filename(project_name)
     output_map = {
-        "agents-md": f"{project_name}-AGENTS.md",
-        "claude-md": f"{project_name}-CLAUDE.md",
-        "obsidian": f"{project_name}.md",
+        "agents-md": f"{safe_name}-AGENTS.md",
+        "claude-md": f"{safe_name}-CLAUDE.md",
+        "obsidian": f"{safe_name}.md",
     }
     out_path = Path(args.output)
     if out_path.is_dir():
@@ -995,12 +1267,23 @@ def main() -> None:
         log.error("Report not found: %s", scan_path)
         sys.exit(1)
     try:
-        report: dict[str, Any] = json.loads(scan_path.read_text(encoding="utf-8"))
+        report = json.loads(scan_path.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError as exc:
         log.error("Invalid JSON: %s", exc)
         sys.exit(1)
+    except OSError as exc:
+        log.error("Cannot read report %s: %s", scan_path, exc)
+        sys.exit(1)
+    if not isinstance(report, dict):
+        # A hand-edited or hostile report may hold a list/string at the top
+        # level — every renderer expects a mapping.
+        log.error("Invalid report: expected a JSON object at the top level, got %s",
+                  type(report).__name__)
+        sys.exit(1)
 
-    project_name = args.name or report.get("project_name", "project")
+    project_name = args.name or report.get("project_name") or "project"
+    if not isinstance(project_name, str):
+        project_name = str(project_name)
     report["project_name"] = project_name
 
     # ── Load intent (user interview output) ──
@@ -1008,7 +1291,7 @@ def main() -> None:
         intent_path = Path(args.intent_file)
         if intent_path.exists():
             try:
-                intent = json.loads(intent_path.read_text(encoding="utf-8"))
+                intent = json.loads(intent_path.read_text(encoding="utf-8-sig"))
                 if isinstance(intent, dict):
                     report["intent"] = intent
                     log.info("Intent loaded: %s", intent_path)

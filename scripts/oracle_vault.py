@@ -113,29 +113,47 @@ def push_to_vault(vault: Path, project_name: str, content: str,
                 f"(a .bak copy will be kept)"
             )
         backup = note_path.with_suffix(".md.bak")
-        atomic_write(backup, note_path.read_text(encoding="utf-8"),
+        atomic_write(backup, note_path.read_text(encoding="utf-8-sig"),
                      must_stay_under_root=vault_root)
     atomic_write(note_path, content, must_stay_under_root=vault_root)
     return note_path
 
 
 def render_note_from_scan(scan_path: Path, intent_path: Path | None) -> tuple[str, str]:
-    """Render the obsidian note from a scan report. Returns (project_name, content)."""
+    """Render the obsidian note from a scan report. Returns (project_name, content).
+
+    A malformed or hostile report must fail cleanly instead of crashing with a
+    traceback: the top level must be a JSON object (every renderer expects a
+    mapping) and the file must be readable.
+    """
     # Import the shared renderer from the sibling script (same directory).
     scripts_dir = Path(__file__).resolve().parent
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
     from oracle_generate import render_obsidian
 
-    report = json.loads(scan_path.read_text(encoding="utf-8"))
+    try:
+        report = json.loads(scan_path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in {scan_path}: {exc}") from exc
+    except OSError as exc:
+        raise ValueError(f"Cannot read {scan_path}: {exc}") from exc
+    if not isinstance(report, dict):
+        raise ValueError(
+            f"Invalid report {scan_path}: expected a JSON object at the top "
+            f"level, got {type(report).__name__}"
+        )
     if intent_path and intent_path.exists():
         try:
-            intent = json.loads(intent_path.read_text(encoding="utf-8"))
+            intent = json.loads(intent_path.read_text(encoding="utf-8-sig"))
             if isinstance(intent, dict):
                 report["intent"] = intent
         except json.JSONDecodeError:
             pass
-    return report.get("project_name", "project"), render_obsidian(report)
+    name = report.get("project_name", "project")
+    if not isinstance(name, str):
+        name = str(name)
+    return name, render_obsidian(report)
 
 
 def main():
@@ -168,7 +186,12 @@ def main():
             print(json.dumps({"error": f"Scan report not found: {scan_path}"}))
             sys.exit(1)
         intent_path = Path(args.intent_file) if args.intent_file else None
-        scan_name, content = render_note_from_scan(scan_path, intent_path)
+        try:
+            scan_name, content = render_note_from_scan(scan_path, intent_path)
+        except ValueError as exc:
+            print(f"[error] {exc}", file=sys.stderr)
+            print(json.dumps({"error": str(exc)}))
+            sys.exit(1)
         name = name or scan_name
     if not name:
         print(json.dumps({"error": "No project name: pass --name or use --scan"}))

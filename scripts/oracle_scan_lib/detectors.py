@@ -511,7 +511,7 @@ def detect_entry_points(path: Path) -> list[dict[str, str]]:
         if py_file.name.startswith("_"):
             continue
         try:
-            tree = ast.parse(py_file.read_text(encoding="utf-8"))
+            tree = ast.parse(py_file.read_text(encoding="utf-8-sig"))
         except (OSError, SyntaxError, ValueError):
             continue
         has_main = any(
