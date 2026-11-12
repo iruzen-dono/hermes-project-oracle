@@ -35,6 +35,9 @@ touches code.
 - **Drift detection** — `oracle-check` re-reads the repo and exits non-zero when
   the generated context no longer matches it, so CI fails instead of letting a
   stale AGENTS.md tell agents to run commands that were deleted months ago
+- **Context audit** — `oracle-lint` scores an existing AGENTS.md: which rules
+  the repository confirms, which it contradicts, and which are unfalsifiable
+  noise. Works on files you did not generate.
 - **Cross-platform** — `pathlib` everywhere, no platform-specific code
 
 ## Install
@@ -47,8 +50,8 @@ pipx install hermes-project-oracle
 uv tool install hermes-project-oracle
 ```
 
-Four commands land on your `PATH`: **`oracle-scan`**, **`oracle-generate`**,
-**`oracle-vault`**, **`oracle-check`**.
+Five commands land on your `PATH`: **`oracle-scan`**, **`oracle-generate`**,
+**`oracle-vault`**, **`oracle-check`**, **`oracle-lint`**.
 
 **As a skill** — for Claude Code, Cursor, Codex, Hermes. The zip carries only
 what the skill needs (`SKILL.md`, `scripts/`, `references/`), no `.git/`, tests
@@ -85,7 +88,10 @@ oracle-generate \
 # 3. In CI: fail the build when the context has gone stale
 oracle-check --path . --agents AGENTS.md
 
-# 4. (Optional) push a note into your Obsidian vault
+# 4. Audit a context file you already have (yours or an agent's)
+oracle-lint AGENTS.md
+
+# 5. (Optional) push a note into your Obsidian vault
 oracle-vault --scan .oracle/scan-report.json --vault ~/Documents/"Obsidian Vault"
 ```
 

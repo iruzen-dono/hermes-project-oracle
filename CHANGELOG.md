@@ -4,6 +4,48 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] — 2026-11-12
+
+Generating a context file is a solved problem. Knowing whether the one you
+already have is any good is not. This release adds the audit side.
+
+### Added
+
+- **`oracle-lint`** — reads an existing `AGENTS.md` or `CLAUDE.md` (yours, or
+  one an agent generated for you) and sorts every rule into four buckets:
+  - **verified** — the rule names something the repository confirms
+    (`npm run build` exists, `vitest` is declared, `tsconfig.json` sets
+    `strict: true`).
+  - **wrong** — the rule contradicts the repository. A cited script that was
+    deleted, a tool absent from every manifest, a config file that is not
+    there.
+  - **noise** — unfalsifiable advice: "write clean, maintainable code",
+    "follow best practices", "be careful". Nothing to check, so it is pure
+    inference cost.
+  - **not judged** — could not be decided either way. Deliberately excluded
+    from the score rather than counted against the file.
+  - Prints a score: how many of the judged rules are actually useful.
+  - `--json`, `--max-noise N` (default 50 %), `--strict` (any noise fails).
+  - Exit `0` clean, `1` contradictions or noise over budget, `2` usage error.
+
+### Why
+
+Gloaguen et al. (ETH Zurich SRI / LogicStar, *ICLR 2026 Workshop on Memory for
+LLM-Based Agentic Systems*) measured context files across coding agents and
+LLMs: **no improvement in task success rates**, and **over 20 % more inference
+cost**. Their conclusion — *"unnecessary requirements from context files make
+tasks harder; human-written context files should describe only minimal
+requirements"* — is the premise of this command. Every tool in this space
+generates volume. This one measures it.
+
+### Notes
+
+- `make` was an anchor for Makefile, which made `Make sure ...` count as a
+  concrete reference. It now requires `Makefile`, `make <target>`, with the
+  English filler words excluded.
+- 44 tests in `tests/test_oracle_lint.py`, weighted toward not calling real
+  rules noise.
+
 ## [2.2.0] — 2026-11-12
 
 Context files rot. A generated `AGENTS.md` keeps telling agents to run
