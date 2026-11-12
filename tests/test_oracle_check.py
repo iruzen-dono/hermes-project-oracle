@@ -300,6 +300,42 @@ class TestEndToEnd(unittest.TestCase):
             self.assertEqual(payload["errors"], [])
 
 
+class TestSymbols(unittest.TestCase):
+    """A Windows console is cp1252 and dies on ✓. The tool must degrade."""
+
+    def test_ascii_stream_falls_back(self):
+        stream = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        self.assertFalse(oc._supports_unicode(stream))
+
+    def test_utf8_stream_uses_unicode(self):
+        stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        self.assertTrue(oc._supports_unicode(stream))
+
+    def test_ascii_symbols_are_all_encodable(self):
+        stream = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        original = oc.sys.stdout
+        oc.sys.stdout = stream
+        try:
+            sym = oc._sym()
+        finally:
+            oc.sys.stdout = original
+        self.assertEqual(sym["ok"], "OK")
+        for value in sym.values():
+            value.encode("cp1252")  # must not raise
+
+    def test_unknown_encoding_is_treated_as_ascii(self):
+        class Weird:
+            encoding = "definitely-not-a-codec"
+
+        self.assertFalse(oc._supports_unicode(Weird()))
+
+    def test_stream_without_encoding_is_treated_as_ascii(self):
+        class Bare:
+            pass
+
+        self.assertFalse(oc._supports_unicode(Bare()))
+
+
 class TestReporting(unittest.TestCase):
     """The output paths are what CI reads, so they get tested directly."""
 
@@ -338,7 +374,7 @@ class TestReporting(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             oc._print_human(result, Path("/tmp/x"), {"scan_time": "t"})
         text = buf.getvalue()
-        self.assertIn("✗", text)
+        self.assertTrue("✗" in text or "X " in text, text)
         self.assertIn("oracle-scan", text)
 
     def test_human_output_marks_warnings(self):
@@ -347,7 +383,8 @@ class TestReporting(unittest.TestCase):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             oc._print_human(result, Path("/tmp/x"), {})
-        self.assertIn("⚠", buf.getvalue())
+        text = buf.getvalue()
+        self.assertTrue("⚠" in text or "!" in text, text)
 
 
 class TestManifestConsoleScripts(unittest.TestCase):

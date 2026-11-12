@@ -205,7 +205,7 @@ def _check_commands(text: str, root: Path, result: CheckResult) -> int:
             if scripts is not None and name not in scripts:
                 result.error(
                     "commands",
-                    f"`{match.group(0)}` — no such script in package.json "
+                    f"`{match.group(0)}` - no such script in package.json "
                     f"(have: {', '.join(sorted(scripts)) or 'none'})",
                 )
     return checked
@@ -251,22 +251,42 @@ def _manifest_drift(
 # ── Reporting ─────────────────────────────────────────────────────────────
 
 
-_MARK = {"error": "✗", "warn": "⚠"}
+def _supports_unicode(stream: Any = None) -> bool:
+    """Whether the output stream can carry ✓ ✗ ⚠ →.
+
+    A Windows console defaults to cp1252, where printing ✓ raises
+    UnicodeEncodeError and the tool dies mid-report instead of reporting.
+    """
+    target = stream if stream is not None else sys.stdout
+    encoding = getattr(target, "encoding", None) or "ascii"
+    try:
+        "✓✗⚠→".encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return False
+    return True
+
+
+def _sym() -> dict[str, str]:
+    """Symbol set for the current output stream."""
+    if _supports_unicode():
+        return {"ok": "✓", "error": "✗", "warn": "⚠", "arrow": "→"}
+    return {"ok": "OK", "error": "X", "warn": "!", "arrow": "->"}
 
 
 def _print_human(result: CheckResult, root: Path, stored: dict[str, Any]) -> None:
     scan_time = stored.get("scan_time", "unknown")
     version = stored.get("version", "unknown")
-    print(f"oracle-check {__version__} — {root}")
+    print(f"oracle-check {__version__} - {root}")
     print(f"  stored scan: {scan_time} (v{version})")
     print()
 
+    sym = _sym()
     if not result.findings:
-        print("✓ context matches the repository")
+        print(f"{sym['ok']} context matches the repository")
         return
 
     for finding in result.findings:
-        print(f"{_MARK.get(finding.level, '?')} {finding.category}: {finding.detail}")
+        print(f"{sym.get(finding.level, '?')} {finding.category}: {finding.detail}")
 
     print()
     parts = []
@@ -300,7 +320,7 @@ def _print_json(result: CheckResult, root: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Project Oracle — detect drift between a stored scan and the repository",
+        description="Project Oracle - detect drift between a stored scan and the repository",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
@@ -391,7 +411,10 @@ def main() -> None:
     old_commit = old_conv.get("commit_convention")
     new_commit = new_conv.get("commit_convention")
     if old_commit != new_commit:
-        result.error("commit convention", f"{old_commit!r} → {new_commit!r}")
+        result.error(
+            "commit convention",
+            f"{old_commit!r} {_sym()['arrow']} {new_commit!r}",
+        )
 
     # ── Size drift: a quiet warning, since it is not automatically wrong ──
     old_files = stored.get("file_count")
@@ -400,7 +423,10 @@ def main() -> None:
         delta = new_files - old_files
         if abs(delta) >= max(10, old_files // 4):
             pct = round(delta / old_files * 100)
-            result.warn("size", f"{old_files} → {new_files} files ({delta:+d}, {pct:+d}%)")
+            result.warn(
+                "size",
+                f"{old_files} {_sym()['arrow']} {new_files} files ({delta:+d}, {pct:+d}%)",
+            )
 
     # ── Command validation, if a context file was given ──
     checked_commands = 0
@@ -411,7 +437,7 @@ def main() -> None:
         try:
             text = agents_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
-            result.warn("commands", f"cannot read {agents_path} — skipped")
+            result.warn("commands", f"cannot read {agents_path} - skipped")
         else:
             checked_commands = _check_commands(text, root, result)
 
