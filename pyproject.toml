@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-project-oracle"
+dynamic = ["version"]
+description = "Deep project scanner that generates agent-ready context files — AGENTS.md, CLAUDE.md, Obsidian notes."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Jules Zhou", email = "juleszhou01@gmail.com" }]
+keywords = [
+    "ai-agents",
+    "agents-md",
+    "claude-code",
+    "cursor",
+    "codex",
+    "context-engineering",
+    "developer-tools",
+    "code-scanner",
+    "obsidian",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Documentation",
+    "Topic :: Software Development :: Quality Assurance",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pyyaml>=6",
+]
+
+[project.urls]
+Homepage = "https://github.com/iruzen-dono/hermes-project-oracle"
+Repository = "https://github.com/iruzen-dono/hermes-project-oracle"
+Issues = "https://github.com/iruzen-dono/hermes-project-oracle/issues"
+Changelog = "https://github.com/iruzen-dono/hermes-project-oracle/blob/main/CHANGELOG.md"
+
+[project.scripts]
+oracle-scan = "oracle_scan:main"
+oracle-generate = "oracle_generate:main"
+oracle-vault = "oracle_vault:main"
+
+[tool.setuptools]
+package-dir = { "" = "scripts" }
+py-modules = ["oracle_scan", "oracle_generate", "oracle_vault", "safe_io", "version"]
+packages = ["oracle_scan_lib"]
+
+[tool.setuptools.dynamic]
+version = { attr = "version.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
