@@ -147,6 +147,7 @@ def main() -> None:
     parser.add_argument("--skip-gitignore", action="store_true",
                         help="Do not skip .gitignore patterns")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logs")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args()
 
     if args.verbose:

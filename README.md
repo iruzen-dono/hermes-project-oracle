@@ -1,5 +1,10 @@
 # Project Oracle 🧠
 
+[![CI](https://github.com/iruzen-dono/hermes-project-oracle/actions/workflows/ci.yml/badge.svg)](https://github.com/iruzen-dono/hermes-project-oracle/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/hermes-project-oracle.svg)](https://pypi.org/project/hermes-project-oracle/)
+[![Python](https://img.shields.io/pypi/pyversions/hermes-project-oracle.svg)](https://pypi.org/project/hermes-project-oracle/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **Deep project scanner that generates agent-ready context files.**
 
 Scan any codebase and produce `AGENTS.md`, `CLAUDE.md`, or an Obsidian project
@@ -31,9 +36,20 @@ touches code.
 
 ## Install
 
-Install from the packaged skill zip — it contains only what the skill needs
-(`SKILL.md`, `scripts/`, `references/`), not `.git/`, tests or
-build artifacts:
+**As a CLI** — one command, nothing to clone:
+
+```bash
+pipx install hermes-project-oracle
+# or
+uv tool install hermes-project-oracle
+```
+
+Three commands land on your `PATH`: **`oracle-scan`**, **`oracle-generate`**,
+**`oracle-vault`**.
+
+**As a skill** — for Claude Code, Cursor, Codex, Hermes. The zip carries only
+what the skill needs (`SKILL.md`, `scripts/`, `references/`), no `.git/`, tests
+or build artifacts:
 
 ```bash
 git clone https://github.com/iruzen-dono/hermes-project-oracle.git
@@ -52,24 +68,23 @@ On Windows (PowerShell): `Expand-Archive hermes-project-oracle.zip -DestinationP
 ## Quick start
 
 ```bash
-SKILL=~/.claude/skills/hermes-project-oracle
-
 # 1. Scan a project (writes <project>/.oracle/scan-report.json,
 #    and adds .oracle/ to the project's .gitignore when missing)
-python $SKILL/scripts/oracle_scan.py --path /path/to/project --output /path/to/project/.oracle/
+oracle-scan --path /path/to/project --output /path/to/project/.oracle/
 
 # 2. Generate AGENTS.md, embedding the interview answers
-python $SKILL/scripts/oracle_generate.py \
+oracle-generate \
   --scan .oracle/scan-report.json \
   --template agents-md \
   --output /path/to/project/AGENTS.md \
   --intent-file .oracle/intent.json
 
 # 3. (Optional) push a note into your Obsidian vault
-python $SKILL/scripts/oracle_vault.py \
-  --scan .oracle/scan-report.json \
-  --vault ~/Documents/"Obsidian Vault"
+oracle-vault --scan .oracle/scan-report.json --vault ~/Documents/"Obsidian Vault"
 ```
+
+Running from a skill install instead? Prefix with `python $SKILL/scripts/`
+(`SKILL=~/.claude/skills/hermes-project-oracle`) — the flags are identical.
 
 `--output` accepts a directory (`.oracle/` or `.oracle`) or an explicit JSON
 file path. Run any script with `--help` for all flags.
@@ -92,9 +107,11 @@ file path. Run any script with `--help` for all flags.
 ## Development
 
 ```bash
-pip install ruff pytest
-ruff check .        # lint (deterministic via ruff.toml)
-pytest tests/ -v    # unit + end-to-end (scan → generate → vault)
+pip install -e ".[dev]"
+ruff check .                    # lint (deterministic via ruff.toml)
+mypy scripts/ --ignore-missing-imports
+pytest tests/ -v                # unit + end-to-end (scan → generate → vault)
+pytest tests/ --cov=scripts     # coverage (currently 77%)
 ```
 
 The end-to-end test builds a fixture Node project, runs the full pipeline, and

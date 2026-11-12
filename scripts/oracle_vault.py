@@ -19,8 +19,10 @@ import sys
 from pathlib import Path
 
 try:
-    from version import start_subprocess_coverage
+    from version import __version__, start_subprocess_coverage
 except ImportError:  # standalone copy — silently skip (audit #9)
+    __version__ = "unknown"
+
     def start_subprocess_coverage() -> None:  # type: ignore[misc]
         """Fallback no-op when version.py is unavailable."""
         return None
@@ -172,6 +174,7 @@ def main():
                         help="Category folder inside the vault (single folder name)")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite an existing note (a .bak copy is kept)")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args()
 
     if not args.scan and not args.content:
