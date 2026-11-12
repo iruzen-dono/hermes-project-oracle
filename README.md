@@ -32,6 +32,9 @@ touches code.
   between `<!-- oracle:start/end -->` markers is refreshed in place (your edits
   outside survive), anything else requires `--force` and keeps a `.bak` backup
 - **Multi-template output** — AGENTS.md, CLAUDE.md, Obsidian note, or all in one pass
+- **Drift detection** — `oracle-check` re-reads the repo and exits non-zero when
+  the generated context no longer matches it, so CI fails instead of letting a
+  stale AGENTS.md tell agents to run commands that were deleted months ago
 - **Cross-platform** — `pathlib` everywhere, no platform-specific code
 
 ## Install
@@ -44,8 +47,8 @@ pipx install hermes-project-oracle
 uv tool install hermes-project-oracle
 ```
 
-Three commands land on your `PATH`: **`oracle-scan`**, **`oracle-generate`**,
-**`oracle-vault`**.
+Four commands land on your `PATH`: **`oracle-scan`**, **`oracle-generate`**,
+**`oracle-vault`**, **`oracle-check`**.
 
 **As a skill** — for Claude Code, Cursor, Codex, Hermes. The zip carries only
 what the skill needs (`SKILL.md`, `scripts/`, `references/`), no `.git/`, tests
@@ -79,7 +82,10 @@ oracle-generate \
   --output /path/to/project/AGENTS.md \
   --intent-file .oracle/intent.json
 
-# 3. (Optional) push a note into your Obsidian vault
+# 3. In CI: fail the build when the context has gone stale
+oracle-check --path . --agents AGENTS.md
+
+# 4. (Optional) push a note into your Obsidian vault
 oracle-vault --scan .oracle/scan-report.json --vault ~/Documents/"Obsidian Vault"
 ```
 

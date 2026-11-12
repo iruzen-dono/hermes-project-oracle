@@ -4,6 +4,40 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] — 2026-11-12
+
+Context files rot. A generated `AGENTS.md` keeps telling agents to run
+`npm run build` long after that script was deleted, and nothing notices. This
+release makes the drift visible, and lets CI refuse it.
+
+### Added
+
+- **`oracle-check`** — compares a stored scan report with the repository as it
+  is now. Exits `0` when they agree, `1` on drift, `2` on usage error, so it
+  drops into any CI job as a gate.
+  - **Manifest contents, not just presence** — deleting a script from
+    `package.json` leaves the file in place, so a file-list comparison sees
+    nothing. `oracle-check` compares the scripts and console entry points
+    themselves.
+  - **`--agents`** — validates that commands cited in a context file still
+    exist. `npm run deploy` in an `AGENTS.md` whose manifest has no `deploy`
+    script is reported by name, with the scripts that *do* exist.
+  - **`--json`** — machine-readable output for CI annotations.
+  - **`--strict`** — promotes warnings (dependency changes, size swings) to
+    errors.
+  - Structural drift across build systems, languages, frameworks, entry
+    points, test frameworks, quality tools, CI providers and commit
+    convention.
+- **31 tests** in `tests/test_oracle_check.py`, weighted toward the
+  false-negative direction: a drift that goes unreported is worse than one
+  reported twice.
+
+### Notes
+
+- `_count_files` judges skip lists against paths *relative to the project
+  root*. An absolute path can legitimately contain `build` or `dist` in a
+  parent directory, which previously would have suppressed the whole count.
+
 ## [2.1.0] — 2026-11-12
 
 Distribution release. The tool now installs as a real Python package instead of
