@@ -56,10 +56,11 @@ Changelog = "https://github.com/iruzen-dono/hermes-project-oracle/blob/main/CHAN
 oracle-scan = "oracle_scan:main"
 oracle-generate = "oracle_generate:main"
 oracle-vault = "oracle_vault:main"
+oracle-check = "oracle_check:main"
 
 [tool.setuptools]
 package-dir = { "" = "scripts" }
-py-modules = ["oracle_scan", "oracle_generate", "oracle_vault", "safe_io", "version"]
+py-modules = ["oracle_scan", "oracle_generate", "oracle_vault", "oracle_check", "safe_io", "version"]
 packages = ["oracle_scan_lib"]
 
 [tool.setuptools.dynamic]
