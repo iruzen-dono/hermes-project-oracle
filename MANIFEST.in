@@ -1,0 +1,27 @@
+# Source distribution contents. Keep it to what a user of the package needs:
+# the code, the docs that are linked from the README, and the tests that prove
+# the safety claims (they ship on purpose — "no leaked tokens, no env values"
+# is only credible if the test that asserts it is in the archive).
+include LICENSE
+include CHANGELOG.md
+include README.md
+include SKILL.md
+include package_skill.py
+include pyproject.toml
+include ruff.toml
+include .coveragerc
+
+recursive-include references *.md *.json
+recursive-include tests *.py
+
+# Build metadata is regenerated on every build; shipping it in the archive
+# only makes the tarball look like a checkout that was never cleaned.
+prune scripts/hermes_project_oracle.egg-info
+prune dist
+prune dist-alias
+prune .github
+
+global-exclude *.py[cod]
+global-exclude __pycache__
+global-exclude .coverage
+global-exclude *.bak

@@ -79,6 +79,14 @@ jobs:
           python -m build --outdir dist-alias packaging/project-oracle
           python -m twine check dist-alias/*
 
+      - name: Assert the sdist carries no stale build metadata
+        run: |
+          if tar -tzf dist/hermes_project_oracle-*.tar.gz \
+             | grep -qE 'egg-info/(PKG-INFO|entry_points|requires|top_level)'; then
+            echo "::error::the sdist ships stale .egg-info build metadata"
+            exit 1
+          fi
+
       - name: Install the wheel in a clean venv and smoke-test entry points
         run: |
           python -m venv /tmp/clean
