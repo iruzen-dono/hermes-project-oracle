@@ -302,7 +302,17 @@ def verify(text: str, root: Path, scripts: set[str] | None, manifests: str) -> t
     if ts is not None:
         return ts
 
-    # 3. A named tool must appear in the manifests.
+    # 3. A cited config file that does not exist. This outranks the tool-name
+    #    check below: "settings live in tsconfig.build.json" is a claim about a
+    #    *file*, and the file being absent is a contradiction even when the word
+    #    TypeScript appears in package.json.
+    for match in re.finditer(r"\b([\w./-]+\.(?:toml|ya?ml|json|cfg|ini))\b", text):
+        candidate = match.group(1)
+        mentions_path = "/" in candidate or candidate.count(".") > 1
+        if mentions_path and not (root / candidate).exists():
+            return (WRONG, f"{candidate} does not exist")
+
+    # 4. A named tool must appear in the manifests.
     lowered = text.lower()
     for tool, (_needle, manifest_name) in _TOOL_DEPS.items():
         if not re.search(rf"\b{re.escape(tool)}\b", lowered):
@@ -310,13 +320,6 @@ def verify(text: str, root: Path, scripts: set[str] | None, manifests: str) -> t
         if tool in manifests.lower():
             return (VERIFIED, f"{tool} is declared in {manifest_name}")
         return (WRONG, f"{tool} is not declared in any manifest")
-
-    # 4. A cited config file that does not exist.
-    for match in re.finditer(r"\b([\w./-]+\.(?:toml|ya?ml|json|cfg|ini))\b", text):
-        candidate = match.group(1)
-        mentions_path = "/" in candidate or candidate.count(".") > 1
-        if mentions_path and not (root / candidate).exists():
-            return (WRONG, f"{candidate} does not exist")
 
     return None
 

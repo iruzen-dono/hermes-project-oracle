@@ -194,6 +194,21 @@ class TestVerification(unittest.TestCase):
             )
             self.assertEqual(verdict, ol.WRONG)
 
+    def test_missing_config_file_outranks_a_declared_tool(self):
+        """A file that does not exist is a contradiction even when the rule
+        also names a tool that *is* declared. Otherwise the tool check answers
+        'verified' to a claim the repository disproves."""
+        with tempfile.TemporaryDirectory() as td:
+            root = self._root(td, **{"package.json": {"devDependencies": {"typescript": "^5"}}})
+            verdict, note = ol.verify(
+                "TypeScript settings live in `tsconfig.build.json`.",
+                root,
+                None,
+                ol._manifest_text(root),
+            )
+            self.assertEqual(verdict, ol.WRONG)
+            self.assertIn("tsconfig.build.json", note)
+
     def test_claim_with_nothing_checkable_returns_none(self):
         with tempfile.TemporaryDirectory() as td:
             self.assertIsNone(ol.verify("Use 4-space indentation.", Path(td), None, ""))

@@ -74,6 +74,11 @@ jobs:
       - name: Validate metadata
         run: python -m twine check dist/*
 
+      - name: Build + validate the project-oracle alias package
+        run: |
+          python -m build --outdir dist-alias packaging/project-oracle
+          python -m twine check dist-alias/*
+
       - name: Install the wheel in a clean venv and smoke-test entry points
         run: |
           python -m venv /tmp/clean
@@ -82,3 +87,48 @@ jobs:
           /tmp/clean/bin/oracle-generate --version
           /tmp/clean/bin/oracle-vault --version
           /tmp/clean/bin/oracle-scan --help > /dev/null
+
+  action:
+    # The composite action is the only surface users run inside their own CI,
+    # and nothing else here executes it: action.yml can rot without a sign.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build one drifted and one matching fixture repository
+        run: |
+          for d in drifted clean; do
+            mkdir -p "$RUNNER_TEMP/$d/src"
+            printf '%s\n' '{"name":"fixture","scripts":{"build":"tsc","lint":"eslint src"}}' \
+              > "$RUNNER_TEMP/$d/package.json"
+            printf '%s\n' '- Run `npm run lint` before opening a pull request.' \
+                          '- Build with `npm run build`.' \
+              > "$RUNNER_TEMP/$d/AGENTS.md"
+          done
+          printf '%s\n' '- Run `npm run test` before opening a pull request.' \
+                        '- Build with `npm run build`.' \
+            > "$RUNNER_TEMP/drifted/AGENTS.md"
+
+      - name: The action must fail on a drifted context file
+        id: drifted
+        continue-on-error: true
+        uses: ./
+        with:
+          path: ${{ runner.temp }}/drifted
+          agents: AGENTS.md
+          lint: "true"
+
+      - name: The action must pass on a context file that matches
+        uses: ./
+        with:
+          path: ${{ runner.temp }}/clean
+          agents: AGENTS.md
+
+      - name: Assert the drift run actually failed
+        run: |
+          if [ "${{ steps.drifted.outcome }}" != "failure" ]; then
+            echo "::error::the action passed on a context file the repository contradicts"
+            exit 1
+          fi
