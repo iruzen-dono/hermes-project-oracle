@@ -140,3 +140,26 @@ jobs:
             echo "::error::the action passed on a context file the repository contradicts"
             exit 1
           fi
+
+  dogfood:
+    # The project describes itself. If its own AGENTS.md drifts from the code,
+    # either the file is wrong or the tool is — both are worth failing on.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Scan the repository
+        run: python scripts/oracle_scan.py --path . --output .oracle/
+
+      - name: The committed context must still match the code
+        run: python scripts/oracle_check.py --path . --agents AGENTS.md
+
+      - name: The committed context must survive its own audit
+        run: python scripts/oracle_lint.py AGENTS.md --path . --max-noise 20
