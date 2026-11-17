@@ -38,7 +38,7 @@ SKIP_SUFFIXES = {".pyc", ".pyo", ".pyd", ".DS_Store", ".zip"}
 # runs) — never shipped inside the skill zip.
 SKIP_NAMES = {"Thumbs.db", ".DS_Store", "desktop.ini", ".env",
               "package_skill.py", "ruff.toml", ".gitignore", ".coveragerc",
-              ".coverage", "hermes-project-oracle.zip"}
+              ".coverage", "hermes-project-oracle.zip", "project-oracle.zip"}
 
 
 def skill_name() -> str:

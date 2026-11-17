@@ -1,8 +1,8 @@
 # Project Oracle 🧠
 
-[![CI](https://github.com/iruzen-dono/hermes-project-oracle/actions/workflows/ci.yml/badge.svg)](https://github.com/iruzen-dono/hermes-project-oracle/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/hermes-project-oracle.svg)](https://pypi.org/project/hermes-project-oracle/)
-[![Python](https://img.shields.io/pypi/pyversions/hermes-project-oracle.svg)](https://pypi.org/project/hermes-project-oracle/)
+[![CI](https://github.com/iruzen-dono/project-oracle/actions/workflows/ci.yml/badge.svg)](https://github.com/iruzen-dono/project-oracle/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/project-oracle.svg)](https://pypi.org/project/project-oracle/)
+[![Python](https://img.shields.io/pypi/pyversions/project-oracle.svg)](https://pypi.org/project/project-oracle/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **Your `AGENTS.md` says `npm run test`. The repository deleted that script six
@@ -27,7 +27,7 @@ that nothing verifies.
 ## Audit the file you already have
 
 ```bash
-pipx install hermes-project-oracle
+pipx install project-oracle
 oracle-lint AGENTS.md
 ```
 
@@ -77,7 +77,7 @@ checkout:
 
 ```yaml
 - uses: actions/checkout@v5
-- uses: iruzen-dono/hermes-project-oracle@v2
+- uses: iruzen-dono/project-oracle@v2
   with:
     agents: AGENTS.md
     lint: "true"      # also audit the file for noise
@@ -130,35 +130,37 @@ Five commands land on your `PATH`: **`oracle-scan`**, **`oracle-generate`**,
 **`oracle-vault`**, **`oracle-check`**, **`oracle-lint`**.
 
 ```bash
-# short alias — ships no code, pulls the package below
 pipx install project-oracle
-
-# the package itself
-pipx install hermes-project-oracle
 # or
-uv tool install hermes-project-oracle
+uv tool install project-oracle
 ```
+
+> **Renamed in 3.0.0.** The package used to be published as
+> `hermes-project-oracle`, and the repository was `iruzen-dono/hermes-project-oracle`.
+> The old name still installs: its final release is an empty pointer that depends
+> on this package, so an existing install migrates itself on upgrade. New installs
+> use the name above.
 
 **As a skill** — for Claude Code, Cursor, Codex, Hermes. The zip carries only
 what the skill needs (`SKILL.md`, `scripts/`, `references/`, plus `LICENSE` and
 `README.md`), no `.git/`, tests or build artifacts:
 
 ```bash
-git clone https://github.com/iruzen-dono/hermes-project-oracle.git
-cd hermes-project-oracle
-python package_skill.py          # builds hermes-project-oracle.zip + validates it
+git clone https://github.com/iruzen-dono/project-oracle.git
+cd project-oracle
+python package_skill.py          # builds project-oracle.zip + validates it
 
 # Claude Code / generic SKILL.md agents
-unzip hermes-project-oracle.zip -d ~/.claude/skills/
+unzip project-oracle.zip -d ~/.claude/skills/
 
 # Hermes Agent
-unzip hermes-project-oracle.zip -d ~/.hermes/skills/
+unzip project-oracle.zip -d ~/.hermes/skills/
 ```
 
-On Windows (PowerShell): `Expand-Archive hermes-project-oracle.zip -DestinationPath $HOME\.claude\skills\`
+On Windows (PowerShell): `Expand-Archive project-oracle.zip -DestinationPath $HOME\.claude\skills\`
 
 Running from a skill install instead? Prefix with `python $SKILL/scripts/`
-(`SKILL=~/.claude/skills/hermes-project-oracle`) — the flags are identical. Run
+(`SKILL=~/.claude/skills/project-oracle`) — the flags are identical. Run
 any script with `--help` for all flags.
 
 ## Scripts

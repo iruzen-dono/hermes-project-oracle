@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 dist/
+dist-*/
 build/
 .oracle/
 *.report.json
@@ -19,4 +20,3 @@ Thumbs.db
 # package_skill.py already allowlists the zip root, this just quiets `git status`)
 _*.txt
 _full_audit.py
-dist-alias/

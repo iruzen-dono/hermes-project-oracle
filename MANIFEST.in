@@ -17,6 +17,7 @@ recursive-include tests *.py
 # Build metadata is regenerated on every build; shipping it in the archive
 # only makes the tarball look like a checkout that was never cleaned.
 prune scripts/hermes_project_oracle.egg-info
+prune scripts/project_oracle.egg-info
 prune dist
 prune dist-alias
 prune .github

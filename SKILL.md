@@ -1,5 +1,5 @@
 ---
-name: hermes-project-oracle
+name: project-oracle
 description: Audits, verifies and generates the context file a coding agent reads (AGENTS.md, CLAUDE.md, Obsidian notes). Tells you which rules the repository backs, which it contradicts, and which are unfalsifiable noise; fails CI when the file has drifted; generates the file with real build commands, every detected framework, environment variable names, and known project pitfalls. Use when the user asks to scan a project, audit or lint an existing AGENTS.md/CLAUDE.md, stop context drift in CI, generate a context file, onboard onto an unfamiliar repository, or push a project summary into an Obsidian vault.
 ---
 
