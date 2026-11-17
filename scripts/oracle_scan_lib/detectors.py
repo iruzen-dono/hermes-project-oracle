@@ -590,3 +590,31 @@ def detect_languages(
             "ratio": round(lang_scores[key] / total * 100, 1),
         })
     return result
+
+
+def detect_build_systems(root: Path) -> list[dict[str, Any]]:
+    """Every build system of the project, nested manifests included.
+
+    `oracle-scan` and `oracle-check` both call this. They used to build the set
+    separately — the scan appended nested manifests, the checker did not — so
+    any monorepo was reported as drift the instant after it was scanned, which
+    is exactly what the CI gate is supposed to check.
+
+    The nested collection is imported here rather than at module level:
+    `oracle_scan_lib.structure` already imports the `_detect_*` helpers from
+    this module, so a top-level import would be circular.
+    """
+    from oracle_scan_lib.structure import _collect_nested_packages
+
+    systems = detect_build_system(root)
+    for nested in _collect_nested_packages(root):
+        systems.append(
+            {
+                "file": nested["file"],
+                # Keep the owning directory in the label: the same script name in
+                # backend/ and frontend/ has to stay distinguishable.
+                "label": f"nested: {nested['file']}",
+                "parsed": nested["parsed"],
+            }
+        )
+    return systems

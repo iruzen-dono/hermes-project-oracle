@@ -39,7 +39,7 @@ except ImportError:  # scripts/ not on sys.path — visible, not silently wrong
 
 from oracle_scan_lib.conventions import detect_conventions
 from oracle_scan_lib.detectors import (
-    detect_build_system,
+    detect_build_systems,
     detect_entry_points,
     detect_frameworks,
     detect_languages,
@@ -123,7 +123,7 @@ def _load_report(path: Path) -> dict[str, Any] | None:
 
 def _scan_now(root: Path, *, include_vendored: bool = False) -> dict[str, Any]:
     """Re-read the parts of the repository that a context file depends on."""
-    build_systems = detect_build_system(root)
+    build_systems = detect_build_systems(root)
     frameworks = detect_frameworks(
         {"project_path": str(root), "build_systems": build_systems}
     )
