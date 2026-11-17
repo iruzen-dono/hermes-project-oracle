@@ -77,7 +77,7 @@ checkout:
 
 ```yaml
 - uses: actions/checkout@v5
-- uses: iruzen-dono/project-oracle@v2
+- uses: iruzen-dono/project-oracle@v3
   with:
     agents: AGENTS.md
     lint: "true"      # also audit the file for noise
