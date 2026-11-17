@@ -3,6 +3,6 @@ contact_links:
   - name: Security issue
     url: https://github.com/iruzen-dono/project-oracle/security/advisories/new
     about: A possible secret leak must be reported privately, never in an issue.
-  - name: Question
-    url: https://github.com/iruzen-dono/project-oracle/discussions
-    about: Usage questions and ideas, if Discussions is enabled.
+  - name: "Before filing: the README"
+    url: https://github.com/iruzen-dono/project-oracle#audit-the-file-you-already-have
+    about: Installation, the four commands and what each verdict means are there. A wrong verdict still belongs in an issue.
