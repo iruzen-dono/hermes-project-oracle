@@ -34,11 +34,17 @@ jobs:
 
       - name: Assert the tag matches the package version
         run: |
-          python - "$GITHUB_REF_NAME" <<'PY'
+          python - "${GITHUB_REF_NAME}" "${GITHUB_REF_TYPE}" <<'PY'
           import re, sys, tomllib
           from pathlib import Path
 
-          tag = sys.argv[1].lstrip("v")
+          tag, ref_type = sys.argv[1], sys.argv[2]
+          if ref_type != "tag":
+              # workflow_dispatch is the smoke-test path: there is no tag to agree with.
+              print(f"not a tag run ({ref_type}: {tag}) - version check skipped")
+              raise SystemExit(0)
+
+          tag = tag.lstrip("v")
           source = re.search(r'__version__ = "([^"]+)"',
                              Path("scripts/version.py").read_text(encoding="utf-8")).group(1)
           alias = tomllib.loads(Path("packaging/project-oracle/pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
@@ -95,11 +101,26 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: dist
-          path: dist
+          path: artifacts
 
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      # The artifact keeps the two directories it was built from, and a trusted
+      # publishing token is scoped to ONE project: two projects need two
+      # exchanges, so split them and publish separately.
+      - name: Split the two distributions
+        run: |
+          mkdir -p dist-canonical dist-alias
+          find artifacts/dist -maxdepth 1 -type f -exec mv {} dist-canonical/ \;
+          find artifacts/dist-alias -maxdepth 1 -type f -exec mv {} dist-alias/ \;
+          ls -l dist-canonical dist-alias
+
+      - name: Publish hermes-project-oracle
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: dist
-          # The alias may already exist while the real package does not (or the
-          # reverse); skipping existing files keeps a re-run idempotent.
+          packages-dir: dist-canonical
+          skip-existing: true
+
+      - name: Publish the project-oracle alias
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-alias
           skip-existing: true
