@@ -37,7 +37,6 @@ try:
 except ImportError:  # scripts/ not on sys.path — visible, not silently wrong
     __version__ = "unknown"
 
-from oracle_scan_lib.constants import SKIP_DIRS
 from oracle_scan_lib.conventions import detect_conventions
 from oracle_scan_lib.detectors import (
     detect_build_system,
@@ -45,6 +44,7 @@ from oracle_scan_lib.detectors import (
     detect_frameworks,
     detect_languages,
 )
+from oracle_scan_lib.files import count_project_entries
 
 
 # ── Result model ──────────────────────────────────────────────────────────
@@ -121,47 +121,31 @@ def _load_report(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def _scan_now(root: Path) -> dict[str, Any]:
+def _scan_now(root: Path, *, include_vendored: bool = False) -> dict[str, Any]:
     """Re-read the parts of the repository that a context file depends on."""
     build_systems = detect_build_system(root)
     frameworks = detect_frameworks(
         {"project_path": str(root), "build_systems": build_systems}
     )
     return {
-        "languages": detect_languages(root),
+        "languages": detect_languages(root, include_vendored=include_vendored),
         "build_systems": build_systems,
         "frameworks": frameworks,
-        "entry_points": detect_entry_points(root),
+        "entry_points": detect_entry_points(root, include_vendored=include_vendored),
         "conventions": detect_conventions(root),
     }
 
 
-def _count_files(root: Path) -> tuple[int, int]:
-    """Count files and directories, using the scanner's own skip list.
+def _count_files(root: Path, *, include_vendored: bool = False) -> tuple[int, int]:
+    """Count files and directories exactly the way ``oracle-scan`` does.
 
-    Sharing SKIP_DIRS with the scanner is what makes the number comparable
-    with ``file_count`` in the report. A private list here silently produced
-    a 2x false positive, because it counted the virtualenv.
+    Delegating to ``count_project_entries`` is what keeps the number
+    comparable with ``file_count`` in the report. The previous local walk
+    judged skip names on the absolute path, so a project living under
+    ``.../build/`` counted zero, and it took seconds on any repository with a
+    ``node_modules`` because it entered the tree before discarding it.
     """
-    skip = SKIP_DIRS
-    files = dirs = 0
-    try:
-        for entry in root.rglob("*"):
-            # Judge on the path relative to the root: an absolute path can
-            # legitimately contain "build" or "dist" in a parent directory.
-            try:
-                parts = entry.relative_to(root).parts
-            except ValueError:
-                continue
-            if any(part in skip for part in parts):
-                continue
-            if entry.is_file():
-                files += 1
-            elif entry.is_dir():
-                dirs += 1
-    except OSError:
-        pass
-    return files, dirs
+    return count_project_entries(root, include_vendored=include_vendored)
 
 
 # ── Command validation ────────────────────────────────────────────────────
@@ -342,6 +326,11 @@ def main() -> None:
     )
     parser.add_argument("--json", action="store_true", help="Machine-readable output")
     parser.add_argument("--strict", action="store_true", help="Treat warnings as drift")
+    parser.add_argument(
+        "--include-vendored", action="store_true",
+        help="Count vendored trees (node_modules, .venv, ...) as the scan does "
+             "when it was itself run with --include-vendored",
+    )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args()
 
@@ -361,7 +350,11 @@ def main() -> None:
         sys.exit(2)
 
     result = CheckResult()
-    fresh = _scan_now(root)
+    # Match the report's own counting mode: a report generated with
+    # --include-vendored must not look like drift just because the checker
+    # pruned node_modules by default.
+    include_vendored = bool(args.include_vendored or stored.get("vendored_included"))
+    fresh = _scan_now(root, include_vendored=include_vendored)
 
     # ── Structural drift ──
     result.add_set_drift(
@@ -418,7 +411,7 @@ def main() -> None:
 
     # ── Size drift: a quiet warning, since it is not automatically wrong ──
     old_files = stored.get("file_count")
-    new_files, _ = _count_files(root)
+    new_files, _ = _count_files(root, include_vendored=include_vendored)
     if isinstance(old_files, int) and old_files > 0:
         delta = new_files - old_files
         if abs(delta) >= max(10, old_files // 4):

@@ -6,6 +6,7 @@ Functions moved verbatim out of oracle_scan.py — behaviour is unchanged.
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import json
 import re
 import subprocess
@@ -15,6 +16,7 @@ from typing import Any
 from oracle_scan_lib.constants import ENV_EXAMPLE_NAMES as _ENV_EXAMPLE_NAMES
 from oracle_scan_lib.constants import SKIP_DIRS as _SKIP_DIRS
 from oracle_scan_lib.detectors import _flat_deps
+from oracle_scan_lib.files import iter_project_files
 from oracle_scan_lib.io import load_toml as _load_toml
 from oracle_scan_lib.io import read_maybe_rooted as _read_maybe_rooted
 from oracle_scan_lib.io import safe_read as _safe_read
@@ -195,14 +197,10 @@ def _detect_junit(path: Path) -> bool:
         )):
             return True
     # A *Test.java / *Tests.java file is itself evidence of a JUnit-style suite.
-    for pat in ("*Test.java", "*Tests.java", "*Test.kt", "*Tests.kt"):
-        try:
-            for f in path.rglob(pat):
-                if any(s in f.parts for s in _SKIP_DIRS):
-                    continue
-                return True
-        except OSError:
-            continue
+    for f in iter_project_files(path):
+        if fnmatch.fnmatch(f.name, "*Test.java") or fnmatch.fnmatch(f.name, "*Tests.java") \
+                or fnmatch.fnmatch(f.name, "*Test.kt") or fnmatch.fnmatch(f.name, "*Tests.kt"):
+            return True
     return False
 
 
@@ -416,27 +414,25 @@ def _count_test_files(path: Path) -> int:
                 "*.spec.ts", "*.spec.js", "*.spec.tsx",
                 "*.spec.mjs", "*.spec.cjs",
                 "*Test.java", "*Tests.java", "*Test.kt", "*Tests.kt")
+    test_dirs = ("tests", "test", "__tests__")
     count = 0
-    for pat in patterns:
-        for f in path.rglob(pat):
-            if any(s in f.parts for s in _SKIP_DIRS):
-                continue
+    # One pruned walk instead of 27 `rglob` scans. Every pattern used to
+    # descend into node_modules, which made the count both slow and wrong —
+    # a vendored package shipping `*.test.js` is not a test of yours.
+    for f in iter_project_files(path):
+        name = f.name
+        if any(fnmatch.fnmatch(name, pattern) for pattern in patterns):
             count += 1
-    # Bare `*.mjs` / `*.cjs` under a tests/ (or __tests__/) folder are real
-    # suites for the built-in `node --test` runner (audit #2): the runner
-    # needs no config file and no dependency, the folder layout is the
-    # only marker. Count them once (patterns above already cover *.test.mjs).
-    for test_dir_name in ("tests", "test", "__tests__"):
-        for f in path.rglob(f"{test_dir_name}/*.mjs"):
-            if any(s in f.parts for s in _SKIP_DIRS):
-                continue
-            if ".test." in f.name or ".spec." in f.name:
-                continue  # already counted above
-            count += 1
-        for f in path.rglob(f"{test_dir_name}/*.cjs"):
-            if any(s in f.parts for s in _SKIP_DIRS):
-                continue
-            if ".test." in f.name or ".spec." in f.name:
-                continue
+            continue
+        # Bare `*.mjs` / `*.cjs` under a tests/ (or __tests__/) folder are real
+        # suites for the built-in `node --test` runner (audit #2): the runner
+        # needs no config file and no dependency, the folder layout is the
+        # only marker.
+        if (
+            name.endswith((".mjs", ".cjs"))
+            and ".test." not in name
+            and ".spec." not in name
+            and f.parent.name in test_dirs
+        ):
             count += 1
     return count

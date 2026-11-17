@@ -9,10 +9,10 @@ import ast
 from pathlib import Path
 from typing import Any
 
-from oracle_scan_lib.constants import SKIP_DIRS as _SKIP_DIRS
+from oracle_scan_lib.files import iter_project_files
 
 
-def _detect_misc(path: Path) -> dict[str, Any]:
+def _detect_misc(path: Path, *, include_vendored: bool = False) -> dict[str, Any]:
     """Miscellaneous metadata about the project."""
     misc: dict[str, Any] = {}
 
@@ -40,8 +40,8 @@ def _detect_misc(path: Path) -> dict[str, Any]:
     # Template engines
     template_exts = {".j2", ".jinja", ".hbs", ".handlebars", ".ejs", ".pug", ".haml", ".liquid", ".twig"}
     template_count = sum(
-        1 for f in path.rglob("*") if f.is_file() and f.suffix in template_exts
-        and not any(s in f.parts for s in _SKIP_DIRS)
+        1 for f in iter_project_files(path, include_vendored=include_vendored)
+        if f.suffix in template_exts
     )
     misc["template_count"] = template_count
 

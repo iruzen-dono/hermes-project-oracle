@@ -38,6 +38,10 @@ touches code.
 - **Context audit** — `oracle-lint` scores an existing AGENTS.md: which rules
   the repository confirms, which it contradicts, and which are unfalsifiable
   noise. Works on files you did not generate.
+- **Honest numbers, fast** — `node_modules`, `.venv`, `.next`, `dist` and the
+  rest are pruned *during* the walk instead of filtered afterwards, so a
+  TypeScript project is reported as TypeScript (not 71 % JavaScript from its
+  dependencies) and a 46 s scan of a Next.js repo finishes in under a second
 - **Cross-platform** — `pathlib` everywhere, no platform-specific code
 
 ## Install
@@ -100,6 +104,10 @@ Running from a skill install instead? Prefix with `python $SKILL/scripts/`
 
 `--output` accepts a directory (`.oracle/` or `.oracle`) or an explicit JSON
 file path. Run any script with `--help` for all flags.
+
+Need the dependency counts instead of your own code's? `oracle-scan
+--include-vendored` restores the old walk-everything behaviour; the choice is
+recorded in the report so `oracle-check` re-counts the same way.
 
 ## Scripts
 
