@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.2] — 2026-11-17
+
+`oracle-generate` wrote the current branch into every file it produced.
+
+A generated `AGENTS.md` is committed, so `- **Branch**: `feat/whatever`` pinned a
+value that changes on every checkout: the file was stale the moment it landed,
+and regenerating from another branch produced a diff that meant nothing. Remotes
+and the commit count stay — they only change when the repository does. Found by
+generating this repository's own `AGENTS.md`.
+
+- **fix**: no branch line in generated context files, pinned by a test
+- **ci**: a `dogfood` job scans this repository and runs `oracle-check` and
+  `oracle-lint` against the committed `AGENTS.md`, so it cannot drift from the
+  code unnoticed
+- **docs**: `CONTRIBUTING.md`, `SECURITY.md`, issue forms, and an `AGENTS.md`
+  written for this repository's own contributors
+
 ## [3.0.1] — 2026-11-17
 
 `oracle-check` reported false drift on every monorepo, immediately after a scan.
