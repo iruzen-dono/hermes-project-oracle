@@ -73,10 +73,11 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
 from oracle_scan_lib.constants import (  # noqa: E402
-    SKIP_DIRS as _SKIP_DIRS,
     sanitize_remote_url as _sanitize_remote_url,  # noqa: F401 — re-export: tests import it from here
 )
 # (oracle_scan_lib.io is consumed by the lib modules, not by this CLI entrypoint.)
+
+from oracle_scan_lib.files import count_project_entries  # noqa: E402
 
 from oracle_scan_lib.conventions import detect_conventions, detect_env_files  # noqa: E402
 
@@ -146,6 +147,10 @@ def main() -> None:
                         help="Max tree depth (default: 3)")
     parser.add_argument("--skip-gitignore", action="store_true",
                         help="Do not skip .gitignore patterns")
+    parser.add_argument("--include-vendored", action="store_true",
+                        help="Also count the trees Oracle normally prunes "
+                             "(node_modules, .venv, .next, dist, ...). "
+                             "Off by default: vendored files are not your code.")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logs")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args()
@@ -166,7 +171,7 @@ def main() -> None:
 
     # ── Phase 1: Languages ──
     log.debug("Detecting languages...")
-    languages = detect_languages(root)
+    languages = detect_languages(root, include_vendored=args.include_vendored)
 
     # ── Phase 2: Build systems ──
     log.debug("Detecting build systems...")
@@ -191,7 +196,7 @@ def main() -> None:
 
     # ── Phase 4: Entry points ──
     log.debug("Finding entry points...")
-    entry_points = detect_entry_points(root)
+    entry_points = detect_entry_points(root, include_vendored=args.include_vendored)
 
     # ── Phase 5: Conventions ──
     log.debug("Detecting conventions...")
@@ -211,13 +216,14 @@ def main() -> None:
 
     # ── Phase 8: Miscellaneous ──
     log.debug("Misc metadata...")
-    misc = _detect_misc(root)
+    misc = _detect_misc(root, include_vendored=args.include_vendored)
 
     # ── Counts ──
-    file_count = sum(1 for _ in root.rglob("*") if _.is_file()
-                     and not any(s in _.parts for s in _SKIP_DIRS))
-    dir_count = sum(1 for _ in root.rglob("*") if _.is_dir()
-                    and not any(s in _.parts for s in _SKIP_DIRS))
+    # Pruned during the walk (not filtered afterwards): entering node_modules
+    # only to discard its files is what made a Next.js scan take 46 s.
+    file_count, dir_count = count_project_entries(
+        root, include_vendored=args.include_vendored
+    )
 
     # ── Assemble ──
     # Heuristic project summary (issue #5), in priority order:
@@ -253,6 +259,8 @@ def main() -> None:
         "summary_source": summary_source,
         "file_count": file_count,
         "dir_count": dir_count,
+        # Recorded so `oracle-check` re-counts exactly the way the report did.
+        "vendored_included": bool(args.include_vendored),
         "languages": languages,
         "build_systems": build_systems,
         "framework": framework,

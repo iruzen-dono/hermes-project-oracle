@@ -18,6 +18,7 @@ from oracle_scan_lib.constants import (
     NODE_TEST_PACKAGES as _NODE_TEST_PACKAGES,
     SKIP_EXTENSIONS as _SKIP_EXTENSIONS,
 )
+from oracle_scan_lib.files import iter_project_files
 from oracle_scan_lib.io import load_toml as _load_toml
 from oracle_scan_lib.io import read_maybe_rooted as _read_maybe_rooted
 
@@ -431,7 +432,9 @@ def detect_frameworks(scan: dict[str, Any]) -> list[str]:
     return _dedupe(fws)
 
 
-def detect_entry_points(path: Path) -> list[dict[str, str]]:
+def detect_entry_points(
+    path: Path, *, include_vendored: bool = False
+) -> list[dict[str, str]]:
     """Find the project's entry points (startup files)."""
     patterns = {
         "main.py": "application_entry",
@@ -471,29 +474,31 @@ def detect_entry_points(path: Path) -> list[dict[str, str]]:
     # imported, never executed directly.
     _CONFIG_PARTS = {"config", "conf", "settings", "__tests__", "tests",
                      "test", "__mocks__", "mocks", "fixtures"}
-    for pat, etype in patterns.items():
-        for found in path.rglob(pat):
-            if found.is_file() and not any(
-                skip in found.parts for skip in ["node_modules", ".git", ".venv", "venv", "__pycache__"]
-            ):
-                try:
-                    rel = found.relative_to(path)
-                except ValueError:
-                    continue
-                if any(part.lower() in _CONFIG_PARTS for part in rel.parts[:-1]):
-                    continue
-                entries.append({"path": str(rel.as_posix()), "type": etype})
-
-    # Spring Boot patterns (Application.kt, Application.java)
-    for pattern in ("**/Application.kt", "**/Application.java",
-                    "**/*Application.kt", "**/*Application.java"):
-        for found in path.glob(pattern):
-            if found.is_file() and ".git" not in found.parts:
-                try:
-                    rel = found.relative_to(path)
-                except ValueError:
-                    continue
-                entries.append({"path": str(rel.as_posix()), "type": "spring_boot_entry"})
+    # One pruned walk instead of 33 `rglob` scans. Each `rglob(name)` descends
+    # the entire tree — node_modules included — so merely locating `index.ts`
+    # cost 16 s on a Next.js project.
+    for found in iter_project_files(path, include_vendored=include_vendored):
+        try:
+            rel = found.relative_to(path)
+        except ValueError:
+            continue
+        rel_posix = rel.as_posix()
+        etype = next(
+            (
+                kind
+                for pattern, kind in patterns.items()
+                if rel_posix == pattern or rel_posix.endswith("/" + pattern)
+            ),
+            None,
+        )
+        if etype is not None and not any(
+            part.lower() in _CONFIG_PARTS for part in rel.parts[:-1]
+        ):
+            entries.append({"path": rel_posix, "type": etype})
+        # Spring Boot: Application.kt / Application.java and their *Application
+        # siblings, at any depth.
+        if found.name.endswith(("Application.kt", "Application.java")):
+            entries.append({"path": rel_posix, "type": "spring_boot_entry"})
 
     # Declared console scripts: [project.scripts] in pyproject.toml (issue #3)
     pdata = _load_toml(_read_maybe_rooted(path / "pyproject.toml", path))
@@ -539,12 +544,17 @@ def detect_entry_points(path: Path) -> list[dict[str, str]]:
     return unique[:15]
 
 
-def detect_languages(path: Path) -> list[dict[str, Any]]:
-    """Count files per extension and return the detected languages."""
+def detect_languages(
+    path: Path, *, include_vendored: bool = False
+) -> list[dict[str, Any]]:
+    """Count files per extension and return the detected languages.
+
+    The walk is pruned by ``SKIP_DIRS``: counting ``node_modules`` used to make
+    a TypeScript Next.js project report itself as 71 % JavaScript, with 10 680
+    vendored files behind a ``file_count`` of 52.
+    """
     counts: defaultdict[str, int] = defaultdict(int)
-    for f in path.rglob("*"):
-        if not f.is_file():
-            continue
+    for f in iter_project_files(path, include_vendored=include_vendored):
         name = f.name
         # Skip common generated / minified
         if ".min." in name or name.startswith("."):

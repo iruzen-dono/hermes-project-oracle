@@ -56,7 +56,8 @@ python <skill_dir>/scripts/oracle_scan.py --path <project> --output <project>/.o
 file path. The directory form writes `.oracle/scan-report.json`. Keep the
 output **inside** the scanned project (as shown) so it stays out of version
 control. Flags: `--depth N` (tree depth, default 3), `--skip-gitignore`,
-`--verbose`.
+`--include-vendored` (count `node_modules`/`.venv`/`.next` too — off by
+default, because they are not your code), `--verbose`.
 
 The report contains languages, **all** detected frameworks, build systems,
 runnable npm scripts, entry points, test frameworks + test-file counts,

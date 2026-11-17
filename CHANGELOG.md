@@ -4,6 +4,66 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] — 2026-11-17
+
+The scanner was counting what it claimed to ignore. `SKIP_DIRS` was applied to
+the *results* of the walk, never to the walk itself, so every counter descended
+into `node_modules`, `.venv` and `.next` and then threw the entries away.
+
+Measured on a real Next.js project (`trade-quote`, 10 680 vendored JS files):
+
+| | 2.3.0 | 2.4.0 |
+|---|---|---|
+| Scan time | 46.65 s | **0.45 s** |
+| Languages | JavaScript 71.1 % / TypeScript 28.9 % | **TypeScript 97.7 % / JavaScript 2.3 %** |
+| Files | 52 | 52 (`--include-vendored`: 24 155) |
+
+The old report contradicted itself in two consecutive log lines: 10 680 + 4 346
+files counted, `Files: 52` printed underneath.
+
+### Fixed
+
+- **Pruned traversal** — new `oracle_scan_lib/files.py` (`walk_project`,
+  `iter_project_files`, `count_project_entries`) prunes `SKIP_DIRS` while
+  descending instead of filtering afterwards. Used by the language breakdown,
+  the file/directory counts, the template count, the entry-point search and
+  `oracle-check`.
+- **Language breakdown** — a TypeScript codebase is no longer reported as
+  mostly JavaScript because its dependencies are.
+- **Entry points** — 33 separate `rglob` scans (each descending the whole tree)
+  became one pruned walk: 16.6 s → 0.01 s on the same project. Vendored
+  `index.js` / `main.py` files are no longer offered as your entry points.
+- **Test-file count** — 27 `rglob` scans became one walk. A dependency shipping
+  `*.test.js` no longer inflates the count.
+- **JUnit detection** — same pruned walk instead of four `rglob` scans.
+- **Projects under a skip-named parent** — a repository living in
+  `.../build/my-app` used to report zero files, because skip names were matched
+  against absolute path components. They are now matched per directory name.
+
+### Added
+
+- **`--include-vendored`** on `oracle-scan` (and `oracle-check`) restores the
+  old walk-everything behaviour for projects that keep source inside a skipped
+  directory. The choice is stored as `vendored_included` in the report, and
+  `oracle-check` re-counts the same way without being told.
+
+### Changed
+
+- **Regenerate your scan report after upgrading.** Language percentages and
+  file counts will differ from a 2.3.0 report on any repository with
+  dependencies installed — that is the fix, and an old report will otherwise
+  look like drift.
+- `oracle-check`'s size check now compares like with like: the same pruned walk
+  produces both numbers.
+
+### Verified
+
+- 165 tests / 1 541 subtests (16 new, all pinning the pruning), ruff clean,
+  mypy clean, 77 % coverage.
+- Old vs new report diffed on two repositories: only `languages` changed; build
+  systems, frameworks, entry points, env names, conventions and summaries are
+  byte-identical.
+
 ## [2.3.0] — 2026-11-12
 
 Generating a context file is a solved problem. Knowing whether the one you
