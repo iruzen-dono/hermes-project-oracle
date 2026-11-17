@@ -1,0 +1,77 @@
+name: Project Oracle context check
+description: Fail the build when AGENTS.md / CLAUDE.md has drifted from the repository it describes.
+author: iruzen-dono
+branding:
+  icon: check-circle
+  color: gray-dark
+
+inputs:
+  path:
+    description: Repository root the context file is checked against.
+    required: false
+    default: "."
+  agents:
+    description: Context file to verify, relative to the repository root.
+    required: false
+    default: AGENTS.md
+  lint:
+    description: Also audit the file for noisy rules ("true" or "false").
+    required: false
+    default: "false"
+  max-noise:
+    description: Noise budget in percent, used only when lint is true.
+    required: false
+    default: "50"
+
+runs:
+  using: composite
+  steps:
+    # The scan report is gitignored, so a fresh CI checkout never has one.
+    # Re-scan first: the scan is deterministic and finishes in well under a
+    # second, and oracle-check compares the committed context file against it.
+    - name: Scan the repository
+      shell: bash
+      env:
+        ORACLE_INPUT_PATH: ${{ inputs.path }}
+      run: |
+        set -euo pipefail
+        # The Microsoft Store ships a python3.exe stub that exits 0 without
+        # running anything, so presence and exit code are both unreliable:
+        # probe the output instead.
+        PY=python3
+        [ "$("$PY" -c 'print(1)' 2>/dev/null)" = "1" ] || PY=python
+        "$PY" "${{ github.action_path }}/scripts/oracle_scan.py" \
+          --path "$ORACLE_INPUT_PATH" --output "$ORACLE_INPUT_PATH/.oracle/"
+
+    - name: Verify the context file has not drifted
+      shell: bash
+      env:
+        ORACLE_INPUT_PATH: ${{ inputs.path }}
+        ORACLE_INPUT_AGENTS: ${{ inputs.agents }}
+      run: |
+        set -euo pipefail
+        # The Microsoft Store ships a python3.exe stub that exits 0 without
+        # running anything, so presence and exit code are both unreliable:
+        # probe the output instead.
+        PY=python3
+        [ "$("$PY" -c 'print(1)' 2>/dev/null)" = "1" ] || PY=python
+        "$PY" "${{ github.action_path }}/scripts/oracle_check.py" \
+          --path "$ORACLE_INPUT_PATH" --agents "$ORACLE_INPUT_AGENTS"
+
+    - name: Audit the context file for noise
+      if: inputs.lint == 'true'
+      shell: bash
+      env:
+        ORACLE_INPUT_PATH: ${{ inputs.path }}
+        ORACLE_INPUT_AGENTS: ${{ inputs.agents }}
+        ORACLE_INPUT_MAX_NOISE: ${{ inputs.max-noise }}
+      run: |
+        set -euo pipefail
+        # The Microsoft Store ships a python3.exe stub that exits 0 without
+        # running anything, so presence and exit code are both unreliable:
+        # probe the output instead.
+        PY=python3
+        [ "$("$PY" -c 'print(1)' 2>/dev/null)" = "1" ] || PY=python
+        "$PY" "${{ github.action_path }}/scripts/oracle_lint.py" \
+          "$ORACLE_INPUT_PATH/$ORACLE_INPUT_AGENTS" \
+          --path "$ORACLE_INPUT_PATH" --max-noise "$ORACLE_INPUT_MAX_NOISE"
