@@ -1,4 +1,4 @@
-# Project Oracle 🧠
+# Project Oracle
 
 [![CI](https://github.com/iruzen-dono/project-oracle/actions/workflows/ci.yml/badge.svg)](https://github.com/iruzen-dono/project-oracle/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/project-oracle.svg)](https://pypi.org/project/project-oracle/)
@@ -124,7 +124,7 @@ requires `--force` and keeps a `.bak` backup.
 - **28 languages detected** — Python, Java, Kotlin, TypeScript, Go, Rust, PHP, C#, Ruby, and more
 - **Build system + test detection** — Maven, Gradle, npm/yarn/pnpm/bun, uv/pip, Cargo, Go modules, Composer; Jest, Vitest, pytest, JUnit, and test-file counts
 - **Monorepo aware** — nested manifests discovered up to 2 levels deep
-- **Honest numbers, fast** — `node_modules`, `.venv`, `.next`, `dist` and the rest are pruned *during* the walk instead of filtered afterwards, so a TypeScript project is reported as TypeScript (not 71 % JavaScript from its dependencies) and a 46 s scan of a Next.js repo finishes in under a second. `--include-vendored` restores the old walk-everything behaviour, and the choice is recorded in the report so `oracle-check` re-counts the same way
+- **Pruned during the walk, not after** — `node_modules`, `.venv`, `.next`, `dist` and the rest are skipped as they are encountered. On a fixture with 12 TypeScript files and a 4000-file `node_modules`, the scan reports **TypeScript 100 %** in 0.30 s; `--include-vendored` makes the same tree report **JavaScript 99.7 %** across 4015 files. The choice is recorded in the report, so `oracle-check` re-counts the same way
 - **Cross-platform** — `pathlib` everywhere, no platform-specific code
 
 ## Install
@@ -190,7 +190,7 @@ pip install -e ".[dev]"
 ruff check .                    # lint (deterministic via ruff.toml)
 mypy scripts/ --ignore-missing-imports
 pytest tests/ -v                # unit + end-to-end (scan → generate → vault)
-pytest tests/ --cov=scripts     # coverage (currently 77%)
+pytest tests/ --cov=scripts     # coverage
 ```
 
 The end-to-end test builds a fixture Node project, runs the full pipeline, and
