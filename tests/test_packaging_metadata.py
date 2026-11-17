@@ -39,13 +39,24 @@ class TestDistributionMetadata(unittest.TestCase):
         )
 
     def test_alias_depends_on_the_real_distribution(self):
-        """The alias ships no code: every command comes from the dependency."""
+        """The alias ships no code: every command comes from the dependency.
+
+        The floor has to be the alias's own version. Pinning `>=2.5.0` on a
+        2.5.1 alias would happily resolve to the 2.5.0 release it was meant to
+        replace — installing an older package than the one asked for.
+        """
         project = _load(ALIAS)["project"]
         deps = project.get("dependencies", [])
         self.assertEqual(len(deps), 1, f"expected exactly one dependency, got {deps}")
         self.assertTrue(
             deps[0].startswith("hermes-project-oracle"),
             f"alias must depend on hermes-project-oracle, got {deps[0]}",
+        )
+        floor = deps[0].split(">=")[-1].strip()
+        self.assertEqual(
+            floor,
+            project["version"],
+            f"alias requires >={floor} but is itself {project['version']}",
         )
         self.assertNotIn(
             "scripts", project, "the alias must not define its own entry points"
