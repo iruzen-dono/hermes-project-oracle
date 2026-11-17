@@ -1,6 +1,6 @@
 """Single source of truth for the Project Oracle version."""
 
-__version__ = "3.0.0"
+__version__ = "3.0.1"
 
 
 def start_subprocess_coverage() -> None:

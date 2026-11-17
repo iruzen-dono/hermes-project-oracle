@@ -439,5 +439,44 @@ class TestStrictMode(unittest.TestCase):
             self.assertEqual(strict.returncode, 1, strict.stdout)
 
 
+class TestNestedManifestAgreement(unittest.TestCase):
+    """The scan and the checker must derive the same build systems.
+
+    They used to disagree: `oracle-scan` appended nested manifests in a second
+    phase, while `oracle-check` re-derived the set with a bare
+    `detect_build_system`. A monorepo therefore reported
+
+        - packages/web/package.json (no longer present)
+
+    immediately after its own scan: the CI gate failed on a context file that
+    had just been generated, on exactly the layout the README advertises as
+    "monorepo aware". The fix is one shared function, and this test is what
+    keeps the two from drifting apart again.
+    """
+
+    def test_checker_sees_the_nested_manifests_the_scan_recorded(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "pyproject.toml").write_text("[project]", encoding="utf-8")
+            web = root / "packages" / "web"
+            web.mkdir(parents=True)
+            (web / "package.json").write_text('{"name": "web"}', encoding="utf-8")
+
+            stored = oc._names(oc.detect_build_systems(root))
+            fresh = oc._names(oc._scan_now(root)["build_systems"])
+
+            self.assertIn("packages/web/package.json", fresh)
+            self.assertEqual(stored, fresh, "checker and scan must agree")
+
+    def test_a_flat_project_still_has_no_drift(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "pyproject.toml").write_text("[project]", encoding="utf-8")
+            self.assertEqual(
+                oc._names(oc.detect_build_systems(root)),
+                oc._names(oc._scan_now(root)["build_systems"]),
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

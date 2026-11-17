@@ -82,7 +82,7 @@ from oracle_scan_lib.files import count_project_entries  # noqa: E402
 from oracle_scan_lib.conventions import detect_conventions, detect_env_files  # noqa: E402
 
 from oracle_scan_lib.detectors import (  # noqa: E402
-    detect_build_system,
+    detect_build_systems,
     detect_entry_points,
     detect_frameworks,
     detect_languages,
@@ -90,7 +90,7 @@ from oracle_scan_lib.detectors import (  # noqa: E402
 
 from oracle_scan_lib.misc import _detect_misc, _entry_docstring  # noqa: E402
 
-from oracle_scan_lib.structure import _collect_nested_packages, get_structure  # noqa: E402
+from oracle_scan_lib.structure import get_structure  # noqa: E402
 
 from oracle_scan_lib.vcs import get_git_context  # noqa: E402
 
@@ -175,18 +175,8 @@ def main() -> None:
 
     # ── Phase 2: Build systems ──
     log.debug("Detecting build systems...")
-    build_systems = detect_build_system(root)
-
-    # ── Phase 2b: Nested manifests (monorepo support) ──
-    nested_packages = _collect_nested_packages(root)
-    for np in nested_packages:
-        build_systems.append({
-            "file": np["file"],
-            # Audit #1: keep the owning directory in the label — same script
-            # name in backend/ and frontend/ must stay distinguishable.
-            "label": f"nested: {np['file']}",
-            "parsed": np["parsed"],
-        })
+    # Nested manifests included: oracle-check compares against this same set.
+    build_systems = detect_build_systems(root)
 
     # ── Phase 3: Frameworks (list — a project usually has several) ──
     log.debug("Detecting frameworks...")
