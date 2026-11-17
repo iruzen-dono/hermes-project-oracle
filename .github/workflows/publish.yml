@@ -52,6 +52,13 @@ jobs:
               raise SystemExit(0)
 
           tag = tag.lstrip("v")
+          if not re.fullmatch(r"\d+\.\d+\.\d+", tag):
+              # A moving major tag (v3) is a pointer, not a release: it can never
+              # equal a full version, and refusing it would make the tag the
+              # action reference depends on impossible to create.
+              print(f"moving tag {tag} - version check skipped")
+              raise SystemExit(0)
+
           source = re.search(r'__version__ = "([^"]+)"',
                              Path("scripts/version.py").read_text(encoding="utf-8")).group(1)
           legacy = tomllib.loads(Path("packaging/hermes-project-oracle/pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
