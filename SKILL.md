@@ -1,26 +1,29 @@
 ---
 name: hermes-project-oracle
-description: Scans any codebase and generates AGENTS.md, CLAUDE.md, or Obsidian project notes with real build commands, every detected framework, environment variable names, and known project pitfalls. Use when the user asks to scan a project, generate AGENTS.md or CLAUDE.md, onboard onto an unfamiliar repository, document project architecture and conventions, or push a project summary into an Obsidian vault.
+description: Audits, verifies and generates the context file a coding agent reads (AGENTS.md, CLAUDE.md, Obsidian notes). Tells you which rules the repository backs, which it contradicts, and which are unfalsifiable noise; fails CI when the file has drifted; generates the file with real build commands, every detected framework, environment variable names, and known project pitfalls. Use when the user asks to scan a project, audit or lint an existing AGENTS.md/CLAUDE.md, stop context drift in CI, generate a context file, onboard onto an unfamiliar repository, or push a project summary into an Obsidian vault.
 ---
 
 # Project Oracle
 
-Deep project scanner. It analyses a codebase and produces agent-ready context
-files (AGENTS.md, CLAUDE.md, Obsidian note) so any coding agent understands the
-project's stack, commands, conventions, and landmines in seconds. Zero
-dependencies — pure Python 3.11+ standard library, cross-platform.
+Two halves, and the audit is the one nothing else does:
 
-Unlike a naive scan, this skill also captures **human knowledge a scan cannot
-see**: it interviews you for the project's intent and its known pitfalls, then
-embeds both in the generated file.
+- **Audit** an existing context file — `AGENTS.md`, `CLAUDE.md`, one an agent
+  wrote, one copied from another project. Every line is judged against the
+  repository: *verified*, *contradicted*, or *noise*.
+- **Generate** the file when there is none, including the human knowledge a
+  static scan cannot see.
+
+Zero dependencies — pure Python 3.11+ standard library, cross-platform.
 
 ## When to Use
 
+- A repo already has an `AGENTS.md` / `CLAUDE.md` — audit it before trusting it
+- The context file may have drifted (a renamed script, a deleted folder, a
+  framework that is no longer used)
+- A CI gate is wanted so a stale context file fails the build
 - First time on a project — generate its AGENTS.md / CLAUDE.md
 - A repo with implicit conventions an agent won't infer from code alone
-- Switching between projects — seed a clean context
 - Documenting architecture into an Obsidian vault
-- Onboarding a new developer or AI agent to an existing codebase
 
 ## Prerequisites
 
@@ -30,10 +33,43 @@ embeds both in the generated file.
 
 ## Procedure
 
-Follow these steps in order. Do not skip the interview — it is what makes the
-output genuinely useful.
+Start with the audit if the project already has a context file: it decides
+whether the file is worth keeping or must be regenerated.
 
-### 1. Interview for intent and pitfalls
+### 1. Audit the existing file
+
+```bash
+python <skill_dir>/scripts/oracle_lint.py AGENTS.md --path <project>
+```
+
+Three verdicts, each earned against the repository:
+
+| Verdict | Means |
+|---|---|
+| ✗ contradicted | the repo disproves it — a cited script that does not exist, a tool not in the manifests, a config file that is absent, a `strict` claim the `tsconfig.json` contradicts |
+| ⚠ noise | nothing in it can be checked ("always write clean code") |
+| ✓ verified | the repository backs it |
+
+Exit is non-zero when the noise ratio exceeds the budget, so it can gate CI:
+`--max-noise 20` (default 50), `--strict` (any noise fails), `--json`,
+`--all` (also list rules that could not be judged).
+
+Report the contradictions to the user **with the repository evidence** — that
+is the part they cannot get from a plain lint. Then either fix the file in
+place or regenerate it.
+
+### 2. Gate the drift in CI (optional)
+
+```bash
+python <skill_dir>/scripts/oracle_check.py --path <project> --agents AGENTS.md
+```
+
+`oracle-check` re-reads the repository and exits non-zero when the generated
+context no longer matches it. It compares against `.oracle/scan-report.json`,
+so scan first if the report is missing — which is always the case on a fresh
+CI checkout, because `.oracle/` is gitignored.
+
+### 3. Interview for intent and pitfalls
 
 Ask the user (see `references/interview-script.md` for the full script):
 
@@ -46,7 +82,7 @@ Ask the user (see `references/interview-script.md` for the full script):
 Save the answers as `intent.json` (see `references/intent-example.json`):
 `{"purpose": "...", "pitfalls": [{"area": "...", "note": "..."}]}`.
 
-### 2. Scan
+### 4. Scan
 
 ```bash
 python <skill_dir>/scripts/oracle_scan.py --path <project> --output <project>/.oracle/
@@ -67,7 +103,7 @@ The report carries **no absolute paths** (it is safe to share), and when the
 project has a `.gitignore`, `.oracle/` is added to it so the scan output
 stays out of version control.
 
-### 3. Generate
+### 5. Generate
 
 ```bash
 python <skill_dir>/scripts/oracle_generate.py \
@@ -90,8 +126,11 @@ falls back to an auto-detected summary (pyproject `description` or README).
 - Target exists without markers → the generator refuses (exit 2). Ask the
   user, then re-run with `--force` (the previous file is saved as `.bak`).
 
-### 4. Verify before you save
+### 6. Verify before you save
 
+- Re-run `oracle_lint` on what you just generated. If the generator emitted a
+  rule the repository contradicts, that is a bug worth reporting, not fixable
+  prose.
 - Read the generated file. Do the commands, frameworks, and env var names look right?
 - Confirm **no secrets** and **no absolute paths** leaked in.
 - If `AGENTS.md` / `CLAUDE.md` already existed without markers, the script
@@ -99,7 +138,7 @@ falls back to an auto-detected summary (pyproject `description` or README).
   `--force` after they confirm — the project may have a hand-tuned file
   worth preserving (its `.bak` backup is kept either way).
 
-### 5. Vault (optional)
+### 7. Vault (optional)
 
 ```bash
 python <skill_dir>/scripts/oracle_vault.py \
@@ -115,12 +154,18 @@ can be used instead of `--scan` to push a raw markdown note.
 
 | Script | Role | Output |
 |--------|------|--------|
+| `oracle_lint.py` | Audit a context file against the repo | verified / contradicted / noise |
+| `oracle_check.py` | Fail CI when the context has drifted | exit 1 + drift list |
 | `oracle_scan.py` | Deep project scan | `.oracle/scan-report.json` |
 | `oracle_generate.py` | Report → context files | AGENTS.md / CLAUDE.md / Obsidian |
 | `oracle_vault.py` | Push note into Obsidian | Note in vault |
 
 ## What makes this better than a plain generator
 
+- **It judges the file that already exists** — a generator only ever writes;
+  `oracle-lint` checks each rule against the repository and names the evidence.
+- **Drift fails the build** — `oracle-check` exits non-zero when the file no
+  longer matches the code, instead of letting a stale rule instruct the agent.
 - **Every framework, not just the first** — a Next.js + Express + Socket.IO +
   React project lists all four.
 - **Real commands** — npm scripts are captured with their actual shell command,
@@ -137,6 +182,10 @@ can be used instead of `--scan` to push a raw markdown note.
 ## Pitfalls
 
 - **Existing AGENTS.md** — never overwrite without asking; propose a merge.
+- **Audit before generate** — regenerating a hand-tuned file to "fix" two
+  contradictions throws away everything the team wrote.
+- **`oracle-check` without a scan report** — it exits 2 and tells you to scan
+  first. In CI, always scan then check.
 - **Huge repos (>10K files)** — the scan can take 5-10s; warn the user.
 - **Intent is not detected** — the scan sees the stack, not the business.
   Always ask "what is this project for?".
@@ -145,6 +194,7 @@ can be used instead of `--scan` to push a raw markdown note.
 
 ## Verification
 
+- `oracle_lint AGENTS.md` returns no contradiction on a file you just generated.
 - `cat AGENTS.md | head -40` — do structure, conventions, and entry points look right?
 - Run one simple task against the project to confirm the context loads.
 - Confirm no secret or absolute path leaked into the generated file.
