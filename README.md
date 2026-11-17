@@ -130,6 +130,10 @@ Five commands land on your `PATH`: **`oracle-scan`**, **`oracle-generate`**,
 **`oracle-vault`**, **`oracle-check`**, **`oracle-lint`**.
 
 ```bash
+# short alias — ships no code, pulls the package below
+pipx install project-oracle
+
+# the package itself
 pipx install hermes-project-oracle
 # or
 uv tool install hermes-project-oracle
