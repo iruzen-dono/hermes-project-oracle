@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "project-oracle"
 dynamic = ["version"]
-description = "Deep project scanner that generates agent-ready context files — AGENTS.md, CLAUDE.md, Obsidian notes."
+description = "Audits and generates the context file a coding agent reads. Tells you which rules the repo backs, which it contradicts, and which cannot be checked."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
