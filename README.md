@@ -140,8 +140,8 @@ uv tool install hermes-project-oracle
 ```
 
 **As a skill** — for Claude Code, Cursor, Codex, Hermes. The zip carries only
-what the skill needs (`SKILL.md`, `scripts/`, `references/`), no `.git/`, tests
-or build artifacts:
+what the skill needs (`SKILL.md`, `scripts/`, `references/`, plus `LICENSE` and
+`README.md`), no `.git/`, tests or build artifacts:
 
 ```bash
 git clone https://github.com/iruzen-dono/hermes-project-oracle.git
