@@ -997,5 +997,24 @@ class TestAuditRegressions(unittest.TestCase):
                 f"config/ must not be an entry point, got {entry_paths}")
 
 
+class TestGeneratedGitSection(unittest.TestCase):
+    """A committed context file must not pin the branch it was generated on.
+
+    The branch changes on every checkout, so writing it into AGENTS.md makes the
+    file stale the moment it is committed — and regenerating on another branch
+    produces a diff that means nothing.
+    """
+
+    def test_branch_is_not_written(self):
+        import oracle_generate as gen
+
+        lines = gen._agents_git(
+            {"has_git": True, "branch": "feat/some-branch", "remotes": []}
+        )
+        rendered = " ".join(lines)
+        self.assertIn("## Git", rendered)
+        self.assertNotIn("Branch", rendered)
+
+
 if __name__ == "__main__":
     unittest.main()

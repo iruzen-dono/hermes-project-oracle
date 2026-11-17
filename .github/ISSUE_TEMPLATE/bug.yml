@@ -1,0 +1,63 @@
+name: Bug report
+description: Something crashed, produced wrong output, or refused to run.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A verdict or a crash without the rule it came from cannot be reproduced.
+        Fill in the command and the version — the rest is optional.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `oracle-lint --version`. All five commands share it.
+      placeholder: oracle-lint 3.0.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12.4"
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: The command you ran
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: What you expected, and what happened instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: report
+    attributes:
+      label: Scan report or context fragment (optional, safe to share)
+      description: >
+        A scan report carries no absolute paths and no values from .env. An
+        AGENTS.md fragment is usually what is needed.
+      render: json

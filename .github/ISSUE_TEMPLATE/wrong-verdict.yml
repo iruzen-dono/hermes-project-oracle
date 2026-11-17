@@ -1,0 +1,56 @@
+name: Wrong verdict
+description: oracle-lint judged a rule wrongly - a false contradiction, a false verified, or noise that is checkable.
+title: "[lint] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A wrong verdict is the worst bug this tool can have: it either destroys
+        trust in a correct rule, or certifies one the repository disproves.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: oracle-lint 3.0.1
+    validations:
+      required: true
+
+  - type: textarea
+    id: rule
+    attributes:
+      label: The rule, verbatim
+      description: The line from your context file, exactly as written.
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: verdict
+    attributes:
+      label: The verdict you got
+      description: The matching output line, with its note.
+      render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of wrong verdict
+      options:
+        - Said contradicted, but the rule is true
+        - Said verified, but the repository disproves it
+        - Said noise, but the rule is checkable
+        - Said not judged, but it should be judged
+    validations:
+      required: true
+
+  - type: textarea
+    id: truth
+    attributes:
+      label: What the repository actually contains
+      description: The file list, the package.json scripts, the installed tools - whatever proves the verdict wrong.
+    validations:
+      required: true
