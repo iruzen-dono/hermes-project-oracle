@@ -636,11 +636,16 @@ def _agents_tests(conventions: dict[str, Any]) -> list[str]:
 
 
 def _agents_git(git: dict[str, Any]) -> list[str]:
-    """Branch, remotes (credential-sanitised upstream) and commit count."""
+    """Remotes (credential-sanitised upstream) and commit count.
+
+    The branch is deliberately omitted: see the comment at the call site.
+    """
     git = _safe_dict(git)
     if not git.get("has_git"):
         return []
-    lines = ["## Git", f"- **Branch**: `{_safe_token(git.get('branch', '?'))}`"]
+    # No branch line: a committed context file would pin whichever branch it
+    # happened to be generated on, and every switch would make it stale.
+    lines = ["## Git"]
     remotes = _safe_dict_list(git.get("remotes"))
     if remotes:
         lines.append("- **Remote(s)**:")
@@ -988,7 +993,6 @@ def render_obsidian(report: dict[str, Any]) -> str:
 
     if git.get("has_git"):
         lines.append("## Git")
-        lines.append(f"- **Branch**: `{_safe_token(git.get('branch', '?'))}`")
         lines.extend(
             f"- `{_safe_token(r.get('name', '?'))}`: `{_safe_token(r.get('url', ''))}`"
             for r in _safe_dict_list(git.get("remotes"))[:3]
