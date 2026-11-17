@@ -72,7 +72,7 @@ def should_ship(p: Path) -> bool:
         return False
     if p.suffix in SKIP_SUFFIXES:
         return False
-    if any(part in SKIP_DIRS for part in p.parts):
+    if any(part in SKIP_DIRS or part.endswith(".egg-info") for part in p.parts):
         return False
     if p.is_symlink():
         return False
@@ -117,7 +117,8 @@ def validate_archive(zip_path: Path, name: str) -> list[str]:
             n for n in names
             if n.split("/")[-1] in SKIP_NAMES
             or Path(n).suffix in SKIP_SUFFIXES
-            or any(part in SKIP_DIRS for part in Path(n).parts)
+            or any(part in SKIP_DIRS or part.endswith(".egg-info")
+                   for part in Path(n).parts)
         ]
         if bad:
             errors.append(f"junk files in zip: {bad}")
