@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-project-oracle"
+version = "3.0.0"
+description = "Renamed to project-oracle. This release only moves existing installs across; it ships no code."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Jules Zhou", email = "juleszhou01@gmail.com" }]
+keywords = ["agents-md", "claude-md", "ai-agents", "context-engineering"]
+classifiers = [
+    "Development Status :: 7 - Inactive",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+]
+# Exactly one dependency, and it must be the release that replaced this name.
+dependencies = ["project-oracle>=3.0.0"]
+
+[project.urls]
+Homepage = "https://github.com/iruzen-dono/project-oracle"
+Repository = "https://github.com/iruzen-dono/project-oracle"
+Issues = "https://github.com/iruzen-dono/project-oracle/issues"
+Changelog = "https://github.com/iruzen-dono/project-oracle/blob/main/CHANGELOG.md"
+
+[tool.setuptools]
+packages = []

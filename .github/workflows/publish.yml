@@ -4,12 +4,19 @@ name: Publish
 # PyPI trusts this workflow through OIDC, so the credential is minted per run
 # and expires with it.
 #
-# One-time setup on PyPI (Your projects → Publishing):
-#   1. add a *pending publisher* for `hermes-project-oracle`
-#      and one for `project-oracle` (the alias distribution)
-#      owner: iruzen-dono · repository: hermes-project-oracle
-#      workflow: publish.yml · environment: pypi
-#   2. nothing to store in GitHub secrets.
+# One-time setup on PyPI — one publisher per project, added from the PROJECT's
+# own sidebar (Your projects -> Manage -> Publishing). The account-level
+# "pending publisher" page does not work here: it only creates projects that do
+# not exist yet.
+#
+#   project-oracle          owner iruzen-dono · repo project-oracle · publish.yml · pypi
+#   hermes-project-oracle   owner iruzen-dono · repo project-oracle · publish.yml · pypi
+#
+# The repository name is the field that matters and it changed when the repo was
+# renamed from hermes-project-oracle to project-oracle: BOTH entries had to be
+# edited to match, or the token exchange fails with
+# `invalid-publisher` / `repository not found`.
+# Nothing is stored in GitHub secrets.
 
 on:
   push:
@@ -47,9 +54,9 @@ jobs:
           tag = tag.lstrip("v")
           source = re.search(r'__version__ = "([^"]+)"',
                              Path("scripts/version.py").read_text(encoding="utf-8")).group(1)
-          alias = tomllib.loads(Path("packaging/project-oracle/pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+          legacy = tomllib.loads(Path("packaging/hermes-project-oracle/pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
           problems = [f"{name} is {got}, tag says {tag}"
-                      for name, got in (("scripts/version.py", source), ("alias", alias))
+                      for name, got in (("scripts/version.py", source), ("legacy pointer", legacy))
                       if got != tag]
           if problems:
               print("::error::" + "; ".join(problems))
@@ -61,16 +68,30 @@ jobs:
         run: |
           python -m pip install --upgrade pip build twine
           python -m build --outdir dist
-          python -m build --outdir dist-alias packaging/project-oracle
-          python -m twine check dist/* dist-alias/*
+          python -m build --outdir dist-legacy packaging/hermes-project-oracle
+          python -m twine check dist/* dist-legacy/*
 
       - name: Assert the sdist carries no stale build metadata
         run: |
-          if tar -tzf dist/hermes_project_oracle-*.tar.gz \
+          if tar -tzf dist/project_oracle-*.tar.gz \
              | grep -qE 'egg-info/(PKG-INFO|entry_points|requires|top_level)'; then
             echo "::error::the sdist ships stale .egg-info build metadata"
             exit 1
           fi
+
+      # The migration pointer must never ship the modules: installing it next to
+      # project-oracle would drop the same oracle_*.py files twice.
+      - name: Assert the pointer ships no code
+        run: |
+          python - <<'PY'
+          import glob, zipfile
+          names = zipfile.ZipFile(glob.glob("dist-legacy/*.whl")[0]).namelist()
+          code = [n for n in names if n.endswith(".py")]
+          if code:
+              print(f"::error::the migration pointer ships code: {code}")
+              raise SystemExit(1)
+          print("pointer is metadata only")
+          PY
 
       - name: Smoke-test the wheel's entry points
         run: |
@@ -85,7 +106,7 @@ jobs:
           name: dist
           path: |
             dist/*
-            dist-alias/*
+            dist-legacy/*
 
   publish:
     needs: build
@@ -93,7 +114,7 @@ jobs:
     timeout-minutes: 10
     environment:
       name: pypi
-      url: https://pypi.org/p/hermes-project-oracle
+      url: https://pypi.org/p/project-oracle
     permissions:
       id-token: write
 
@@ -108,19 +129,19 @@ jobs:
       # exchanges, so split them and publish separately.
       - name: Split the two distributions
         run: |
-          mkdir -p dist-canonical dist-alias
+          mkdir -p dist-canonical dist-legacy
           find artifacts/dist -maxdepth 1 -type f -exec mv {} dist-canonical/ \;
-          find artifacts/dist-alias -maxdepth 1 -type f -exec mv {} dist-alias/ \;
-          ls -l dist-canonical dist-alias
+          find artifacts/dist-legacy -maxdepth 1 -type f -exec mv {} dist-legacy/ \;
+          ls -l dist-canonical dist-legacy
 
-      - name: Publish hermes-project-oracle
+      - name: Publish project-oracle
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist-canonical
           skip-existing: true
 
-      - name: Publish the project-oracle alias
+      - name: Publish the hermes-project-oracle migration pointer
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: dist-alias
+          packages-dir: dist-legacy
           skip-existing: true

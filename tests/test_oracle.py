@@ -1,4 +1,4 @@
-"""Tests for hermes-project-oracle.
+"""Tests for project-oracle.
 
 Covers script validity, unit behaviour (URL sanitising, env parsing), and a
 full end-to-end run: scan -> generate -> vault against a fixture project.
@@ -546,7 +546,7 @@ class TestPythonProjectRegressions(unittest.TestCase):
         finally:
             sys.path.pop(0)
         cases = {
-            REPO_ROOT / "hermes-project-oracle.zip": False,
+            REPO_ROOT / "project-oracle.zip": False,
             REPO_ROOT / "tests" / "test_oracle.py": False,
             REPO_ROOT / ".github" / "workflows" / "ci.yml": False,
             REPO_ROOT / ".venv" / "lib" / "x.py": False,

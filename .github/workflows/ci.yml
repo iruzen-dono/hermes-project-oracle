@@ -74,14 +74,14 @@ jobs:
       - name: Validate metadata
         run: python -m twine check dist/*
 
-      - name: Build + validate the project-oracle alias package
+      - name: Build + validate the migration pointer
         run: |
-          python -m build --outdir dist-alias packaging/project-oracle
-          python -m twine check dist-alias/*
+          python -m build --outdir dist-legacy packaging/hermes-project-oracle
+          python -m twine check dist-legacy/*
 
       - name: Assert the sdist carries no stale build metadata
         run: |
-          if tar -tzf dist/hermes_project_oracle-*.tar.gz \
+          if tar -tzf dist/project_oracle-*.tar.gz \
              | grep -qE 'egg-info/(PKG-INFO|entry_points|requires|top_level)'; then
             echo "::error::the sdist ships stale .egg-info build metadata"
             exit 1

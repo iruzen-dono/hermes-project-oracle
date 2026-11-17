@@ -4,6 +4,31 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] — 2026-11-17
+
+Renamed. The package is now `project-oracle`, on PyPI and on GitHub.
+
+`hermes` was the wrong prefix: on PyPI it collides with the Hermes model family,
+so the tool was invisible in a search for what it does, and the name was 22
+characters nobody types. The tool is not tied to any one agent — it checks the
+context file *they all read*.
+
+The old name is not abandoned, it is closed properly:
+
+- `hermes-project-oracle` 3.0.0 is published as an **empty pointer**: no
+  modules, no entry points, a single dependency on `project-oracle>=3.0.0`.
+  `pip install -U hermes-project-oracle` therefore migrates an existing install
+  in place, and its README says where it went.
+- the GitHub repository was renamed `iruzen-dono/project-oracle`; GitHub
+  redirects the old URLs. The action reference is now
+  `iruzen-dono/project-oracle@v3`.
+- the skill archive folder is now `project-oracle`, so unzipping into
+  `~/.claude/skills/` no longer installs a directory named differently from the
+  package it contains.
+
+Nothing changed in the commands, the flags or the report format: this release
+renames the box, not what is inside it.
+
 ## [2.5.1] — 2026-11-17
 
 `oracle-lint` skipped every config file whose name has a single dot. The
