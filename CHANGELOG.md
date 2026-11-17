@@ -4,6 +4,26 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] — 2026-11-17
+
+`oracle-lint` was answering "verified" to a claim the repository disproves.
+Verification ran the tool-name check before the cited-file check, so
+
+    - TypeScript settings live in `tsconfig.build.json`.
+
+came back ✓ because the word *TypeScript* appears in `package.json` — while
+`tsconfig.build.json` did not exist at all. A claim about a specific file is now
+judged as a file claim first: a cited path that is missing is a contradiction,
+whatever else the rule mentions. Regression test:
+`test_missing_config_file_outranks_a_declared_tool`.
+
+- **feat**: `action.yml` — the repository is now a GitHub Action. `oracle-check`
+  runs straight from the action checkout (no install step), and `lint: true`
+  additionally audits the file against a `max-noise` budget.
+- **docs**: the README leads with the audit and the drift gate instead of the
+  generator — the generator is the commodity, the contradiction check is not.
+  A demo GIF is generated from a real `oracle-lint` run.
+
 ## [2.4.0] — 2026-11-17
 
 The scanner was counting what it claimed to ignore. `SKIP_DIRS` was applied to

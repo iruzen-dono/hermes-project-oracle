@@ -74,6 +74,11 @@ jobs:
       - name: Validate metadata
         run: python -m twine check dist/*
 
+      - name: Build + validate the project-oracle alias package
+        run: |
+          python -m build --outdir dist-alias packaging/project-oracle
+          python -m twine check dist-alias/*
+
       - name: Install the wheel in a clean venv and smoke-test entry points
         run: |
           python -m venv /tmp/clean
