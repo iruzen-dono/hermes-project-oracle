@@ -199,7 +199,12 @@ and complete (commands, frameworks, env names, pitfalls).
 
 ## Contributing
 
-PRs welcome! Keep it cross-platform, add tests, preserve the zero-dependency
+PRs welcome. The rules are in [`AGENTS.md`](https://github.com/iruzen-dono/project-oracle/blob/main/AGENTS.md)
+and the workflow — including how to add a lint rule — is in
+[`CONTRIBUTING.md`](https://github.com/iruzen-dono/project-oracle/blob/main/CONTRIBUTING.md).
+Security reports go through [`SECURITY.md`](https://github.com/iruzen-dono/project-oracle/blob/main/SECURITY.md).
+
+The short version: cross-platform, add tests, preserve the zero-dependency
 promise, and never introduce network calls or credential collection.
 
 ## License
