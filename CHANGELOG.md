@@ -4,6 +4,29 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.1] — 2026-11-17
+
+`oracle-check` reported false drift on every monorepo, immediately after a scan.
+
+`oracle-scan` appends nested manifests in a second phase; `oracle-check`
+re-derived the build-system set with a bare `detect_build_system`, which only
+sees the root manifest. Comparing the two produced
+
+    - packages/web/package.json (no longer present)
+
+on a context file that had just been generated from that same repository. The CI
+gate failed on exactly the layout the README advertises as monorepo aware, and
+the GitHub Action inherited it.
+
+Both sides now call one `detect_build_systems()`, and two tests pin the
+agreement. Found by running the tool on three real projects — quotask,
+memory-vault and this repository — not by the suite: 178 tests were green while
+`oracle-check` was broken for anyone with a nested manifest.
+
+- **fix**: nested manifests are visible to `oracle-check`
+- **docs**: the README's demo GIF, licence badge and Docs links are absolute, so
+  the PyPI page renders them instead of showing broken images
+
 ## [3.0.0] — 2026-11-17
 
 Renamed. The package is now `project-oracle`, on PyPI and on GitHub.
