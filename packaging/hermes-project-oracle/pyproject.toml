@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-project-oracle"
-version = "3.0.2"
+version = "3.0.3"
 description = "Renamed to project-oracle. This release only moves existing installs across; it ships no code."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,7 +20,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 # Exactly one dependency, and it must be the release that replaced this name.
-dependencies = ["project-oracle>=3.0.2"]
+dependencies = ["project-oracle>=3.0.3"]
 
 [project.urls]
 Homepage = "https://github.com/iruzen-dono/project-oracle"

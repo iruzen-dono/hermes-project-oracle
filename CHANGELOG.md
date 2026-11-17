@@ -4,6 +4,28 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.3] — 2026-11-17
+
+The PyPI page was the last surface still carrying claims the code could not back.
+
+Two figures left the README. **"a 46 s scan of a Next.js repo finishes in under a
+second"** could not be checked: the baseline came from a repository shape that is
+not in the tree, and both clones used for testing have an empty `node_modules`,
+so the pruning was never exercised at all. And **"not 71 % JavaScript from its
+dependencies"** was simply wrong — on a fixture with 12 TypeScript files and a
+4000-file `node_modules`, the scan reports TypeScript 100 % in 0.30 s, and
+`--include-vendored` makes the same tree report JavaScript **99.7 %** across 4015
+files. The mechanism is sound; the numbers attached to it were invented. The
+README now carries the fixture instead.
+
+Also removed: the emoji in the title, `(currently 77%)` beside the coverage
+command, and a `pyproject` description that led with "Deep project scanner" rather
+than the audit — the half with no equivalent.
+
+**No runtime code changed.** This release exists because PyPI freezes the rendered
+README into each release's metadata: the corrected page can only ship with a
+version.
+
 ## [3.0.2] — 2026-11-17
 
 `oracle-generate` wrote the current branch into every file it produced.
