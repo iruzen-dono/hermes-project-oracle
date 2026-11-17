@@ -3,7 +3,7 @@
 [![CI](https://github.com/iruzen-dono/project-oracle/actions/workflows/ci.yml/badge.svg)](https://github.com/iruzen-dono/project-oracle/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/project-oracle.svg)](https://pypi.org/project/project-oracle/)
 [![Python](https://img.shields.io/pypi/pyversions/project-oracle.svg)](https://pypi.org/project/project-oracle/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/iruzen-dono/project-oracle/blob/main/LICENSE)
 
 **Your `AGENTS.md` says `npm run test`. The repository deleted that script six
 months ago.** Every coding agent reads the context file as truth and nobody
@@ -11,7 +11,10 @@ checks it. Project Oracle checks it: which lines the repository backs, which it
 contradicts, and which are unfalsifiable noise — then writes the file in the
 first place when you don't have one.
 
-![oracle-lint finding three contradictions and two noise rules in a stale AGENTS.md](docs/demo.gif)
+![oracle-lint reporting three contradictory rules and two noise rules in a real AGENTS.md](https://raw.githubusercontent.com/iruzen-dono/project-oracle/main/docs/demo.gif)
+
+*A real run, unedited: `oracle-lint` on a project whose `AGENTS.md` had drifted —
+three rules contradicted by the repository, two unfalsifiable, one verified, exit 1.*
 
 **Zero dependencies**: pure Python 3.11+ standard library, cross-platform
 (Windows, Linux, macOS).
@@ -175,10 +178,10 @@ any script with `--help` for all flags.
 
 ## Docs
 
-- Full skill instructions: [`SKILL.md`](SKILL.md)
-- Interview script (intent + pitfalls): [`references/interview-script.md`](references/interview-script.md)
-- Example intent file: [`references/intent-example.json`](references/intent-example.json)
-- Example generated output: [`references/agents-md-example.md`](references/agents-md-example.md)
+- Full skill instructions: [`SKILL.md`](https://github.com/iruzen-dono/project-oracle/blob/main/SKILL.md)
+- Interview script (intent + pitfalls): [`references/interview-script.md`](https://github.com/iruzen-dono/project-oracle/blob/main/references/interview-script.md)
+- Example intent file: [`references/intent-example.json`](https://github.com/iruzen-dono/project-oracle/blob/main/references/intent-example.json)
+- Example generated output: [`references/agents-md-example.md`](https://github.com/iruzen-dono/project-oracle/blob/main/references/agents-md-example.md)
 
 ## Development
 
