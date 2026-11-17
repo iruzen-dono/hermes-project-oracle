@@ -42,9 +42,13 @@ Three verdicts, each one earned against the repository rather than guessed:
 It judges a rule by looking for the claim inside it: a cited script against
 `package.json`, a declared tool (`pytest`, `vitest`, `jest`, `eslint`, `ruff`,
 `black`, `mypy`, `prettier`, `typescript`) against the manifests, a cited config
-file against the filesystem, a TypeScript `strict` claim against `tsconfig.json`.
-Anchored rules it cannot judge are reported as *not judged* instead of being
-silently counted — `--all` lists them.
+file against the filesystem — any path or dotted name (`config/ruff.toml`,
+`tsconfig.build.json`) plus recognisable names like `tsconfig.json`,
+`pyproject.toml` or `docker-compose.yml` — and a TypeScript `strict` claim
+against `tsconfig.json`. A citation introduced by "add" or "create" is advice
+about a file that does not exist yet, not a false description of the repository,
+so it is left alone. Anchored rules it cannot judge are reported as *not judged*
+instead of being silently counted — `--all` lists them.
 
 Exit is non-zero when too much of the file is noise, so it can gate CI:
 

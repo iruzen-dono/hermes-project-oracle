@@ -222,6 +222,45 @@ def _noise_reason(text: str) -> str | None:
 _NPM_RUN = re.compile(r"\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?([a-zA-Z0-9:_-]+)")
 _NOT_SCRIPTS = {"install", "add", "remove", "update", "ci", "init", "create", "run", "exec"}
 
+# A file cited by a rule. Matched on the whole token so `config/ruff.toml` and
+# `tsconfig.build.json` are both caught.
+_CONFIG_FILE = re.compile(r"\b([\w./-]+\.(?:toml|ya?ml|json|cfg|ini))\b")
+
+# A bare filename is only treated as a claim about the repository when its
+# absence would genuinely contradict it. Names with a path or two dots are
+# always judged; a single-dot name only when it is a config file people name
+# on purpose. Otherwise "add a package.json if you need Node tooling" would be
+# reported as a contradiction in a Python project.
+_CONFIG_NAMES = {
+    "tsconfig.json",
+    "jsconfig.json",
+    "pyproject.toml",
+    "setup.cfg",
+    "tox.ini",
+    "ruff.toml",
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    "compose.yml",
+    "compose.yaml",
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+}
+
+# "Create a package.json" is advice, not a description of the repository.
+_CREATION_VERBS = re.compile(
+    r"\b(?:add|adds|adding|create|creates|creating|generate|generates|"
+    r"initiali[sz]e|scaffold|introduce|consider adding)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_file_claim(candidate: str) -> bool:
+    """Whether a cited filename is a claim the repository can disprove."""
+    if "/" in candidate or candidate.count(".") > 1:
+        return True
+    return candidate in _CONFIG_NAMES
+
 _TOOL_DEPS = {
     "pytest": ("pytest", "pyproject.toml"),
     "vitest": ("vitest", "package.json"),
@@ -306,10 +345,13 @@ def verify(text: str, root: Path, scripts: set[str] | None, manifests: str) -> t
     #    check below: "settings live in tsconfig.build.json" is a claim about a
     #    *file*, and the file being absent is a contradiction even when the word
     #    TypeScript appears in package.json.
-    for match in re.finditer(r"\b([\w./-]+\.(?:toml|ya?ml|json|cfg|ini))\b", text):
+    for match in _CONFIG_FILE.finditer(text):
         candidate = match.group(1)
-        mentions_path = "/" in candidate or candidate.count(".") > 1
-        if mentions_path and not (root / candidate).exists():
+        if not _is_file_claim(candidate):
+            continue
+        if _CREATION_VERBS.search(text[: match.start()]):
+            continue
+        if not (root / candidate).exists():
             return (WRONG, f"{candidate} does not exist")
 
     # 4. A named tool must appear in the manifests.

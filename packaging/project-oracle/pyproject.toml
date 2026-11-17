@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "project-oracle"
-version = "2.5.0"
+version = "2.5.1"
 description = "Short install name for hermes-project-oracle: audit AGENTS.md / CLAUDE.md against the repository, and generate it when missing."
 readme = "README.md"
 requires-python = ">=3.11"

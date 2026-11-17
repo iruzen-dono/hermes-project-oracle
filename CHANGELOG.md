@@ -4,6 +4,32 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1] — 2026-11-17
+
+`oracle-lint` skipped every config file whose name has a single dot. The
+cited-file check required a `/` or two dots, so
+
+    - TypeScript settings live in `tsconfig.json`.
+
+was never judged as a file claim — in a repository that has no `tsconfig.json`
+it fell through to the tool check and came back ✓ because the word *TypeScript*
+appears in `package.json`. Same false positive as 2.5.0, one level further out.
+
+A bare filename is now judged when its absence would genuinely contradict the
+repository: paths, dotted names, and a short list of config files people name on
+purpose (`tsconfig.json`, `pyproject.toml`, `docker-compose.yml`, `package.json`,
+…). A citation introduced by "add" or "create" is advice, not a claim, and is
+left alone.
+
+- **fix**: single-dot config files are judged, creation advice is not
+- **build**: `.gitattributes` normalises line endings to LF in the index, so a
+  Windows checkout and a Linux one produce the same bytes
+- **build**: `MANIFEST.in` keeps the sdist to code, docs and tests — the tarball
+  no longer ships the stale metadata (`PKG-INFO`, `entry_points.txt`, `requires.txt`, `top_level.txt`); the residual `SOURCES.txt` is setuptools' own bookkeeping and cannot be pruned.
+- **ci**: `publish.yml` publishes on a tag through PyPI trusted publishing (no
+  stored token) and refuses a tag that disagrees with either distribution's
+  version; CI now fails if the sdist ever carries build metadata again
+
 ## [2.5.0] — 2026-11-17
 
 `oracle-lint` was answering "verified" to a claim the repository disproves.

@@ -1,0 +1,18 @@
+# Normalise line endings in the index: LF everywhere, so a checkout on Windows,
+# on Linux or in CI produces the same bytes. Without this, git rewrites every
+# file it touches and prints a CRLF warning on each commit, while files created
+# by tooling land as LF — the tree drifts into a mix nobody chose.
+* text=auto eol=lf
+
+# Binary assets: never normalise these.
+*.gif binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.zip binary
+
+# Windows-only helpers need CRLF to run in cmd.exe / PowerShell.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

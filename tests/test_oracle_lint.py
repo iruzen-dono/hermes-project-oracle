@@ -209,6 +209,46 @@ class TestVerification(unittest.TestCase):
             self.assertEqual(verdict, ol.WRONG)
             self.assertIn("tsconfig.build.json", note)
 
+    def test_single_dot_config_file_is_judged(self):
+        """`tsconfig.json` has one dot, so it used to be skipped entirely: a
+        rule could cite a file that does not exist and still be counted as
+        verified because the word TypeScript appears in a manifest."""
+        with tempfile.TemporaryDirectory() as td:
+            root = self._root(td, **{"package.json": {"devDependencies": {"typescript": "^5"}}})
+            verdict, note = ol.verify(
+                "TypeScript settings live in `tsconfig.json`.",
+                root,
+                None,
+                ol._manifest_text(root),
+            )
+            self.assertEqual(verdict, ol.WRONG)
+            self.assertIn("tsconfig.json", note)
+
+    def test_creation_advice_is_not_a_contradiction(self):
+        """'Add a package.json' is advice about a repository that has none, not
+        a false description of it."""
+        with tempfile.TemporaryDirectory() as td:
+            result = ol.verify(
+                "Add a `package.json` if the project needs Node tooling.",
+                Path(td),
+                None,
+                "",
+            )
+            self.assertIsNone(result, "creation advice must not be judged as a claim")
+
+    def test_unrecognised_single_dot_file_is_not_judged(self):
+        with tempfile.TemporaryDirectory() as td:
+            self.assertIsNone(
+                ol.verify("Read `settings.json` before starting.", Path(td), None, "")
+            )
+
+    def test_file_claim_classifier(self):
+        self.assertTrue(ol._is_file_claim("config/ruff.toml"))
+        self.assertTrue(ol._is_file_claim("tsconfig.build.json"))
+        self.assertTrue(ol._is_file_claim("tsconfig.json"))
+        self.assertFalse(ol._is_file_claim("settings.json"))
+        self.assertFalse(ol._is_file_claim("README.md"))
+
     def test_claim_with_nothing_checkable_returns_none(self):
         with tempfile.TemporaryDirectory() as td:
             self.assertIsNone(ol.verify("Use 4-space indentation.", Path(td), None, ""))
